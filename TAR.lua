@@ -1,7 +1,5 @@
--- [[ CUSTOM CUP & GENESIS & BOX FARMER SCRIPT (TMI V2.2) ]] --
--- Изменения V2.2:
---  * Добавлено ключевое слово "genesis" / "Genesis" к "Cup" (case-insensitive)
--- Изменения V2.1:
+-- [[ CUSTOM CUP & BOX FARMER SCRIPT (TMI V2.1) ]] --
+-- Изменения:
 --  * Blacklist по Instance ID (а не по имени) — игнорирует уже обработанные предметы
 --  * Игнорирует тулы которые уже в Backpack / Character игрока
 --  * Игнорирует Anchored (закрепленные) Handle / Box — это магазинные витрины
@@ -11,20 +9,6 @@ local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
 _G.CupBoxFarmActive = false
-
--- Ключевые слова для поиска инструментов (case-insensitive)
-local TOOL_KEYWORDS = { "cup", "genesis" }
-
--- Хелпер: проверяет содержит ли имя ОДНО ИЗ ключевых слов
-local function matchesKeyword(name)
-    local lowerName = string.lower(name)
-    for _, keyword in ipairs(TOOL_KEYWORDS) do
-        if string.find(lowerName, keyword) then
-            return true
-        end
-    end
-    return false
-end
 
 -- Blacklist по Instance reference. Используем weak table чтоб мусорные ссылки авто-чистились.
 local Blacklist = setmetatable({}, { __mode = "k" })
@@ -52,7 +36,7 @@ Corner.Parent = MainFrame
 
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, 0, 0, 30)
-TitleLabel.Text = "Cup/Genesis & Box V2.2"
+TitleLabel.Text = "Cup & Box AutoFarm V2.1"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.BackgroundColor3 = Color3.fromRGB(30, 35, 45)
 TitleLabel.Font = Enum.Font.GothamBold
@@ -156,12 +140,13 @@ local function performFarm()
     local originalCFrame = hrp.CFrame
     local targetFound = false
 
-    -- 1. СКАНИРОВАНИЕ ИНСТРУМЕНТОВ (Tools с Cup/genesis в имени, регистронезависимо)
+    -- 1. СКАНИРОВАНИЕ ЧАШ (Tools с Cup/cup/CUP в имени)
     for _, obj in pairs(workspace:GetDescendants()) do
         if not _G.CupBoxFarmActive then break end
 
         if obj:IsA("Tool") or obj:IsA("BackpackItem") then
-            if matchesKeyword(obj.Name) then
+            local name = string.lower(obj.Name)
+            if string.find(name, "cup", "genesis") then
                 -- (А) Игнорируем уже обработанные (по Instance ref, а не по имени)
                 if Blacklist[obj] then continue end
                 -- (Б) Игнорируем то, что уже в руке/рюкзаке
@@ -178,7 +163,7 @@ local function performFarm()
                 local handle = obj:FindFirstChild("Handle") or obj:FindFirstChildWhichIsA("BasePart")
                 if handle and not handle.Anchored then
                     targetFound = true
-                    StatusLabel.Text = "Беру: " .. obj.Name
+                    StatusLabel.Text = "Beру чашу: " .. obj.Name
                     StatusLabel.TextColor3 = Color3.fromRGB(0, 230, 118)
 
                     -- Запоминаем эту чашу в чёрный список (по ID Instance)
@@ -212,7 +197,7 @@ local function performFarm()
 
             if obj:IsA("BasePart") then
                 local name = string.lower(obj.Name)
-                if string.find(name, "box") then
+                if string.find(name, "silver","box") then
                     local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt")
                     if prompt then
                         -- (А) Игнор если уже в blacklist
