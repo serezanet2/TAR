@@ -1,4 +1,6 @@
--- [[ CUSTOM CUP & GENESIS & BOX FARMER SCRIPT (TMI V2.2) ]] --
+-- [[ CUSTOM CUP/GENESIS/GOLD/SILVER/COPPER & BOX FARMER (TMI V2.3) ]] --
+-- Изменения V2.3:
+--  * Добавлены ключевые слова "gold", "silver", "copper" к существующим "cup", "genesis"
 -- Изменения V2.2:
 --  * Добавлено ключевое слово "genesis" / "Genesis" к "Cup" (case-insensitive)
 -- Изменения V2.1:
@@ -13,7 +15,7 @@ local LocalPlayer = Players.LocalPlayer
 _G.CupBoxFarmActive = false
 
 -- Ключевые слова для поиска инструментов (case-insensitive)
-local TOOL_KEYWORDS = { "cup", "genesis" }
+local TOOL_KEYWORDS = { "cup", "genesis", "gold", "silver", "copper" }
 
 -- Хелпер: проверяет содержит ли имя ОДНО ИЗ ключевых слов
 local function matchesKeyword(name)
@@ -52,7 +54,7 @@ Corner.Parent = MainFrame
 
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, 0, 0, 30)
-TitleLabel.Text = "Cup/Genesis & Box V2.2"
+TitleLabel.Text = "TMI V2.3 - Cup/Gen/Gold/Box"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.BackgroundColor3 = Color3.fromRGB(30, 35, 45)
 TitleLabel.Font = Enum.Font.GothamBold
