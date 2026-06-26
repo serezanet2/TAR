@@ -1,4 +1,8 @@
--- [[ CUSTOM CUP/GENESIS/GOLD/SILVER/COPPER & BOX FARMER (TMI V2.3) ]] --
+-- [[ CUSTOM MULTI-KEYWORD & BOX FARMER (TMI V2.4) ]] --
+-- Изменения V2.4:
+--  * Бокс может быть Model или BasePart (раньше только BasePart)
+--  * ProximityPrompt ищется РЕКУРСИВНО внутри бокса (box.Main.ProximityPrompt и т.п.)
+--  * Умное определение позиции для телепорта: PrimaryPart -> сам объект -> Parent промпта
 -- Изменения V2.3:
 --  * Добавлены ключевые слова "gold", "silver", "copper" к существующим "cup", "genesis"
 -- Изменения V2.2:
@@ -54,7 +58,7 @@ Corner.Parent = MainFrame
 
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, 0, 0, 30)
-TitleLabel.Text = "TMI V2.3 - Cup/Gen/Gold/Box"
+TitleLabel.Text = "TMI V2.4 - DeepScan Box"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.BackgroundColor3 = Color3.fromRGB(30, 35, 45)
 TitleLabel.Font = Enum.Font.GothamBold
@@ -207,23 +211,57 @@ local function performFarm()
         end
     end
 
-    -- 2. СКАНИРОВАНИЕ БОКСОВ (BasePart с "box" + ProximityPrompt)
+    -- 2. СКАНИРОВАНИЕ БОКСОВ
+    -- ВАЖНО (V2.4): Бокс может быть Model/BasePart/Folder. ProximityPrompt лежит
+    -- НЕ в корне, а где-то глубже (например, box.Main.ProximityPrompt).
+    -- Поэтому ищем рекурсивно через GetDescendants().
     if not targetFound then
         for _, obj in pairs(workspace:GetDescendants()) do
             if not _G.CupBoxFarmActive then break end
 
-            if obj:IsA("BasePart") then
+            -- Ищем любые объекты (Model/BasePart) у которых в имени есть "box"
+            if obj:IsA("Model") or obj:IsA("BasePart") then
                 local name = string.lower(obj.Name)
                 if string.find(name, "box") then
-                    local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt")
+                    -- (А) Игнор если уже в blacklist
+                    if Blacklist[obj] then continue end
+
+                    -- РЕКУРСИВНЫЙ поиск ProximityPrompt по всем потомкам бокса
+                    local prompt = nil
+                    for _, descendant in pairs(obj:GetDescendants()) do
+                        if descendant:IsA("ProximityPrompt") then
+                            prompt = descendant
+                            break
+                        end
+                    end
+
                     if prompt then
-                        -- (А) Игнор если уже в blacklist
-                        if Blacklist[obj] then continue end
                         -- (Б) Игнор магазинных Prompts с символом "$"
                         if isShopPrompt(prompt) then
                             Blacklist[obj] = true
                             continue
                         end
+
+                        -- Определяем позицию для телепорта:
+                        --   1) PrimaryPart модели если есть
+                        --   2) сам объект если это BasePart
+                        --   3) Parent промпта (та BasePart к которой он привязан)
+                        local targetPos = nil
+                        if obj:IsA("Model") and obj.PrimaryPart then
+                            targetPos = obj.PrimaryPart.Position
+                        elseif obj:IsA("BasePart") then
+                            targetPos = obj.Position
+                        elseif prompt.Parent and prompt.Parent:IsA("BasePart") then
+                            targetPos = prompt.Parent.Position
+                        else
+                            -- Fallback: ищем любую BasePart внутри бокса
+                            local anyPart = obj:FindFirstChildWhichIsA("BasePart", true)
+                            if anyPart then
+                                targetPos = anyPart.Position
+                            end
+                        end
+
+                        if not targetPos then continue end
 
                         targetFound = true
                         StatusLabel.Text = "Активирую бокс: " .. obj.Name
@@ -232,7 +270,7 @@ local function performFarm()
                         originalCFrame = hrp.CFrame
 
                         -- Телепорт сверху бокса
-                        hrp.CFrame = CFrame.new(obj.Position + Vector3.new(0, 3, 0))
+                        hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 3, 0))
                         task.wait(0.15)
 
                         -- Активация ProximityPrompt
