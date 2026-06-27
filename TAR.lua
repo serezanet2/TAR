@@ -1,4 +1,7 @@
--- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V3.1) ]] --
+-- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V3.2) ]] --
+-- Изменения V3.2:
+--  * Дроп тулз через эмуляцию Backspace (VirtualInputManager:SendKeyEvent)
+--    — стандартный хоткей Roblox для дропа тулы, работает как реальное нажатие
 -- Изменения V3.1:
 --  * Тулы сдаются в точку с именем "cng666setna" (ProximityPrompt/BasePart/Model)
 --  * Скрипт сначала телепортируется к точке сдачи, дропает, и возвращается обратно
@@ -96,7 +99,7 @@ Corner.Parent = MainFrame
 
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -28, 0, 28)
-TitleLabel.Text = "TMI V3.1 - Drop to cng666setna"
+TitleLabel.Text = "TMI V3.2 - Backspace Drop"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.BackgroundColor3 = Color3.fromRGB(30, 35, 45)
 TitleLabel.Font = Enum.Font.GothamBold
@@ -264,7 +267,22 @@ local function findDropPoint()
     return nil
 end
 
--- V3.0/V3.1: Сбрасывает все тулы из инвентаря игрока в точку сдачи "cng666setna".
+-- V3.2: VirtualInputManager — сервис для эмуляции реальных нажатий клавиш.
+-- Используется для нажатия Backspace (стандартный хоткей Roblox для дропа тулы из руки).
+local VIM = game:GetService("VirtualInputManager")
+
+-- Эмулирует нажатие Backspace — Roblox дропает экипированную тулу так же,
+-- как если бы это сделал реальный игрок.
+local function pressBackspace()
+    pcall(function()
+        VIM:SendKeyEvent(true, Enum.KeyCode.Backspace, false, game)
+        task.wait(0.03)
+        VIM:SendKeyEvent(false, Enum.KeyCode.Backspace, false, game)
+    end)
+end
+
+-- V3.0/V3.1/V3.2: Сбрасывает все тулы из инвентаря игрока в точку сдачи "cng666setna".
+-- V3.2: Использует Backspace вместо UnequipTools — эмулирует реальное действие игрока.
 -- Если точка сдачи не найдена — сбрасывает в текущей позиции.
 -- Возвращает количество сброшенных тулз.
 local function dropAllTools()
@@ -275,21 +293,21 @@ local function dropAllTools()
     local backpack = LocalPlayer:FindFirstChild("Backpack")
     if not humanoid or not backpack or not hrp then return 0 end
 
-    -- Считаем сколько тулз есть всего (Backpack + Character)
-    local toDropCount = 0
+    -- Собираем все тулы (Backpack + Character)
+    local allTools = {}
     for _, tool in pairs(backpack:GetChildren()) do
-        if tool:IsA("Tool") then toDropCount = toDropCount + 1 end
+        if tool:IsA("Tool") then table.insert(allTools, tool) end
     end
     for _, tool in pairs(character:GetChildren()) do
-        if tool:IsA("Tool") then toDropCount = toDropCount + 1 end
+        if tool:IsA("Tool") then table.insert(allTools, tool) end
     end
 
-    if toDropCount == 0 then return 0 end
+    if #allTools == 0 then return 0 end
 
     -- V3.1: Ищем точку сдачи "cng666setna" в Workspace
     local dropPoint = findDropPoint()
 
-    -- Сохраняем оригинальную позицию игрока и анкорим
+    -- Сохраняем оригинальную позицию игрока
     local origCFrame = hrp.CFrame
     local wasAnchored = hrp.Anchored
 
@@ -300,24 +318,29 @@ local function dropAllTools()
         task.wait(0.1)
     end
 
-    -- 1. Перекидываем все Tool из Backpack в Character
-    for _, tool in pairs(backpack:GetChildren()) do
-        if tool:IsA("Tool") then
-            pcall(function() tool.Parent = character end)
+    -- V3.2: Для каждой тулы — экипируем и нажимаем Backspace (как реальный игрок)
+    local droppedCount = 0
+    for _, tool in ipairs(allTools) do
+        if tool and tool.Parent then
+            -- 1. Экипируем тулу (переносим в Character если её там нет)
+            pcall(function() humanoid:EquipTool(tool) end)
+            task.wait(0.05)
+
+            -- 2. Нажимаем Backspace — Roblox дропнет тулу
+            pressBackspace()
+            task.wait(0.05)
+            droppedCount = droppedCount + 1
         end
     end
 
-    -- 2. UnequipTools() сбрасывает все тулы из Character на землю
-    pcall(function() humanoid:UnequipTools() end)
-
     if dropPoint then
-        task.wait(0.15)  -- даём время тулам физически упасть и закрепиться на месте
+        task.wait(0.1)  -- даём время последней туле упасть
         -- Возвращаемся на исходную позицию
         hrp.Anchored = wasAnchored
         hrp.CFrame = origCFrame
     end
 
-    return toDropCount
+    return droppedCount
 end
 
 local function isShopPrompt(prompt)
