@@ -1,9 +1,10 @@
 --[[
-	Auto Cup & Box Farm V2.2
+	Auto Cup & Box Farm V2.3
 	- Сохраняет CFrame игрока, после обработки целей возвращает обратно и закрепляет (Anchored).
 	- Сканирование каждые 5 сек, подбор каждые 0.1 сек.
 	- Боксы в приоритете, настоящий hold + расширение дистанции.
-	- НОВОЕ: кнопка "Auto Drop" – пока персонаж закреплён, случайный предмет выбрасывается (имитация Backspace).
+	- Auto Drop: пока персонаж закреплён, случайный предмет выбрасывается (Backspace).
+	- НОВОЕ: задержка 0.15с перед Anchored, чтобы избежать десинхронизации с сервером.
 --]]
 
 local Players = game:GetService("Players")
@@ -281,10 +282,12 @@ local function processOneTarget()
 		end
 	end)
 
+	-- Возврат и закрепление (с задержкой для синхронизации)
 	pcall(function()
 		if hrp and hrp.Parent then
 			hrp.CFrame = originalCFrame
 			if farmActive then
+				task.wait(0.15)        -- ДАЁМ СЕРВЕРУ ВРЕМЯ ЗАФИКСИРОВАТЬ ПОЗИЦИЮ
 				hrp.Anchored = true
 			end
 		end
@@ -341,7 +344,7 @@ local titleLabel = Instance.new("TextLabel")
 titleLabel.Size = UDim2.new(0, 120, 0, 30)
 titleLabel.Position = UDim2.new(0, 5, 0, 0)
 titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "Cup & Box Farm V2.2"
+titleLabel.Text = "Cup & Box Farm V2.3"
 titleLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
 titleLabel.Font = Enum.Font.GothamBold
 titleLabel.TextSize = 14
@@ -359,7 +362,7 @@ toggleBtn.TextSize = 24
 toggleBtn.Parent = mainFrame
 
 local contentFrame = Instance.new("Frame")
-contentFrame.Size = UDim2.new(1, 0, 0, 120)  -- увеличена высота
+contentFrame.Size = UDim2.new(1, 0, 0, 120)
 contentFrame.Position = UDim2.new(0, 0, 0, 35)
 contentFrame.BackgroundColor3 = Color3.fromRGB(30, 35, 45)
 contentFrame.BackgroundTransparency = 0.2
