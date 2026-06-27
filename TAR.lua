@@ -13,7 +13,6 @@ local stopRequested = false
 
 -- ====== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ======
 
--- Поиск всех ProximityPrompt внутри workspace.Cups (рекурсивно)
 local function getAllPrompts()
     local prompts = {}
     local cups = workspace:FindFirstChild("Cups")
@@ -32,7 +31,6 @@ local function getAllPrompts()
     return prompts
 end
 
--- Получение родительского объекта (Tool/Model) для промпта
 local function getParentObject(prompt)
     local parent = prompt.Parent
     while parent and parent:IsA("BasePart") do
@@ -41,10 +39,8 @@ local function getParentObject(prompt)
     return parent
 end
 
--- Создание Highlight для объекта
 local function createHighlight(obj)
     if not obj then return nil end
-    -- Проверяем, есть ли уже Highlight
     for _, child in ipairs(obj:GetChildren()) do
         if child:IsA("Highlight") and child.Name == "FarmHighlight" then
             return child
@@ -61,7 +57,6 @@ local function createHighlight(obj)
     return highlight
 end
 
--- Удаление всех Highlight (сессии)
 local function clearHighlights()
     for _, highlight in ipairs(currentHighlights) do
         if highlight and highlight.Parent then
@@ -71,7 +66,6 @@ local function clearHighlights()
     currentHighlights = {}
 end
 
--- Получение позиции для телепортации к промпту
 local function getTargetPosition(prompt)
     local parent = prompt.Parent
     if parent:IsA("BasePart") then
@@ -94,7 +88,6 @@ local function getTargetPosition(prompt)
     return nil
 end
 
--- Симуляция удержания промпта
 local function activatePrompt(prompt)
     local targetPos = getTargetPosition(prompt)
     if not targetPos then return false end
@@ -109,18 +102,15 @@ local function activatePrompt(prompt)
     return true
 end
 
--- ====== ОСНОВНОЙ ЦИКЛ ФАРМА ======
+-- ====== ОСНОВНОЙ ЦИКЛ ======
 
 local function farmCycle()
     while isFarming and not stopRequested do
-        -- 1. Открепляем root перед сессией
         rootPart.Anchored = false
 
-        -- 2. Сканируем промпты
         local prompts = getAllPrompts()
         if #prompts > 0 then
-            -- 3. Создаём Highlight для каждого родительского объекта
-            clearHighlights() -- на всякий случай
+            clearHighlights()
             for _, prompt in ipairs(prompts) do
                 local obj = getParentObject(prompt)
                 if obj then
@@ -129,7 +119,6 @@ local function farmCycle()
                 end
             end
 
-            -- 4. Обрабатываем каждый промпт
             for _, prompt in ipairs(prompts) do
                 if not isFarming or stopRequested then break end
                 activatePrompt(prompt)
@@ -139,21 +128,13 @@ local function farmCycle()
                 task.wait(0.1)
             end
 
-            -- 5. Удаляем сессию (все Highlight)
             clearHighlights()
-
-            -- 6. Ждём 0.2 секунды
             task.wait(0.2)
-
-            -- 7. Закрепляем root
-            rootPart.Anchored = true
-
+            rootPart.Anchored = true   -- закрепляем на время ожидания между сессиями
         else
-            -- Если промптов нет, сразу закрепляем
             rootPart.Anchored = true
         end
 
-        -- 8. Ждём 5 секунд до следующего сканирования
         local elapsed = 0
         while elapsed < 5 and isFarming and not stopRequested do
             task.wait(1)
@@ -161,9 +142,9 @@ local function farmCycle()
         end
     end
 
-    -- Если вышли из цикла (остановка) – чистим и закрепляем
+    -- Когда цикл завершается (например, при остановке) — делаем персонажа свободным
     clearHighlights()
-    rootPart.Anchored = true
+    rootPart.Anchored = false   -- <--- теперь false, чтобы можно было ходить
 end
 
 -- ====== СОЗДАНИЕ GUI ======
@@ -238,21 +219,33 @@ closeCorner.Parent = closeButton
 
 toggleButton.MouseButton1Click:Connect(function()
     if not isFarming then
-        -- Включаем
+        -- Включение
         isFarming = true
         stopRequested = false
         toggleButton.Text = "⏹ Остановить"
         toggleButton.BackgroundColor3 = Color3.new(0.6, 0.2, 0.2)
-
         returnPosition = rootPart.Position
 
         if farmCoroutine then coroutine.close(farmCoroutine) end
         farmCoroutine = coroutine.create(farmCycle)
         coroutine.resume(farmCoroutine)
     else
-        -- Выключаем
+        -- Выключение – персонаж остаётся НЕзакреплённым
         isFarming = false
         stopRequested = true
+
+        -- Убираем Highlight
+        clearHighlights()
+
+        -- Делаем rootPart свободным (false)
+        rootPart.Anchored = false   -- <--- теперь false
+
+        -- Принудительно завершаем корутину
+        if farmCoroutine then
+            coroutine.close(farmCoroutine)
+            farmCoroutine = nil
+        end
+
         toggleButton.Text = "▶ Включить"
         toggleButton.BackgroundColor3 = Color3.new(0.2, 0.6, 0.2)
     end
@@ -263,7 +256,7 @@ closeButton.MouseButton1Click:Connect(function()
     stopRequested = true
     clearHighlights()
     if rootPart then
-        rootPart.Anchored = true
+        rootPart.Anchored = false   -- <--- теперь false
     end
     if farmCoroutine then
         coroutine.close(farmCoroutine)
@@ -272,6 +265,5 @@ closeButton.MouseButton1Click:Connect(function()
     screenGui:Destroy()
 end)
 
--- Делаем окно перетаскиваемым
 frame.Active = true
 frame.Draggable = true
