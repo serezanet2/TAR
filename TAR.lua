@@ -1,4 +1,4 @@
--- LocalScript (Client)
+-- LocalScript (Cli234234ent)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -13,37 +13,6 @@ local stopRequested = false
 
 -- ====== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ======
 
--- Проверка, является ли объект мусором (игнорируем)
-local function isTrash(obj)
-    if not obj then return false end
-    local name = obj.Name
-    if name == "Blood" or name == "Garlic" or name == "Oil" then
-        return true
-    end
-    -- Проверяем предков (на случай вложенности)
-    local parent = obj.Parent
-    while parent do
-        if parent.Name == "Blood" or parent.Name == "Garlic" or parent.Name == "Oil" then
-            return true
-        end
-        parent = parent.Parent
-    end
-    return false
-end
-
--- Проверка, является ли объект Box.main (или его потомком)
-local function isBoxMain(obj)
-    if not obj then return false end
-    if obj.Name == "Box.main" then return true end
-    local parent = obj.Parent
-    while parent do
-        if parent.Name == "Box.main" then return true end
-        parent = parent.Parent
-    end
-    return false
-end
-
--- Поиск всех ProximityPrompt внутри workspace.Cups (рекурсивно) с фильтром
 local function getAllPrompts()
     local prompts = {}
     local cups = workspace:FindFirstChild("Cups")
@@ -52,11 +21,7 @@ local function getAllPrompts()
     local function search(obj)
         for _, child in ipairs(obj:GetChildren()) do
             if child:IsA("ProximityPrompt") then
-                -- Проверяем, не мусор ли это
-                local parentObj = getParentObject(child)
-                if not isTrash(parentObj) then
-                    table.insert(prompts, child)
-                end
+                table.insert(prompts, child)
             else
                 search(child)
             end
@@ -66,7 +31,6 @@ local function getAllPrompts()
     return prompts
 end
 
--- Получение родительского объекта (Tool/Model) для промпта
 local function getParentObject(prompt)
     local parent = prompt.Parent
     while parent and parent:IsA("BasePart") do
@@ -75,10 +39,8 @@ local function getParentObject(prompt)
     return parent
 end
 
--- Создание Highlight (цвет зависит от isBoxMain)
 local function createHighlight(obj)
     if not obj then return nil end
-    -- Проверяем, есть ли уже Highlight с нашим именем
     for _, child in ipairs(obj:GetChildren()) do
         if child:IsA("Highlight") and child.Name == "FarmHighlight" then
             return child
@@ -88,19 +50,13 @@ local function createHighlight(obj)
     highlight.Name = "FarmHighlight"
     highlight.FillColor = Color3.new(0, 0, 0)
     highlight.FillTransparency = 0.5
-    -- Цвет обводки: красный для Box.main, зелёный для остальных
-    if isBoxMain(obj) then
-        highlight.OutlineColor = Color3.new(1, 0, 0)   -- красный
-    else
-        highlight.OutlineColor = Color3.new(0, 1, 0)   -- зелёный
-    end
+    highlight.OutlineColor = Color3.new(0, 1, 0)
     highlight.OutlineTransparency = 0
     highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
     highlight.Parent = obj
     return highlight
 end
 
--- Удаление всех Highlight
 local function clearHighlights()
     for _, highlight in ipairs(currentHighlights) do
         if highlight and highlight.Parent then
@@ -110,7 +66,6 @@ local function clearHighlights()
     currentHighlights = {}
 end
 
--- Получение позиции для телепортации к промпту
 local function getTargetPosition(prompt)
     local parent = prompt.Parent
     if parent:IsA("BasePart") then
@@ -133,7 +88,6 @@ local function getTargetPosition(prompt)
     return nil
 end
 
--- Симуляция удержания промпта
 local function activatePrompt(prompt)
     local targetPos = getTargetPosition(prompt)
     if not targetPos then return false end
@@ -176,7 +130,7 @@ local function farmCycle()
 
             clearHighlights()
             task.wait(0.2)
-            rootPart.Anchored = true
+            rootPart.Anchored = true   -- закрепляем на время ожидания между сессиями
         else
             rootPart.Anchored = true
         end
@@ -188,9 +142,9 @@ local function farmCycle()
         end
     end
 
-    -- При завершении цикла (остановка) — персонаж свободен (false)
+    -- Когда цикл завершается (например, при остановке) — делаем персонажа свободным
     clearHighlights()
-    rootPart.Anchored = false
+    rootPart.Anchored = false   -- <--- теперь false, чтобы можно было ходить
 end
 
 -- ====== СОЗДАНИЕ GUI ======
@@ -232,10 +186,10 @@ title.Font = Enum.Font.GothamBold
 title.Parent = frame
 
 local toggleButton = Instance.new("TextButton")
-toggleButton.Size = UDim2.new(0, 220, 0, 40)
-toggleButton.Position = UDim2.new(0.5, -110, 0.5, -20)
+toggleButton.Size = UDim2.new(0, 200, 0, 40)
+toggleButton.Position = UDim2.new(0.5, -100, 0.5, -20)
 toggleButton.BackgroundColor3 = Color3.new(0.2, 0.6, 0.2)
-toggleButton.Text = "АВТО ФАРМ (ВСЕ ПРЕДМЕТЫ)"
+toggleButton.Text = "▶ Включить"
 toggleButton.TextColor3 = Color3.new(1, 1, 1)
 toggleButton.TextScaled = true
 toggleButton.Font = Enum.Font.GothamSemibold
@@ -268,7 +222,7 @@ toggleButton.MouseButton1Click:Connect(function()
         -- Включение
         isFarming = true
         stopRequested = false
-        toggleButton.Text = "⏹ ОСТАНОВИТЬ"
+        toggleButton.Text = "⏹ Остановить"
         toggleButton.BackgroundColor3 = Color3.new(0.6, 0.2, 0.2)
         returnPosition = rootPart.Position
 
@@ -280,15 +234,19 @@ toggleButton.MouseButton1Click:Connect(function()
         isFarming = false
         stopRequested = true
 
+        -- Убираем Highlight
         clearHighlights()
-        rootPart.Anchored = false
 
+        -- Делаем rootPart свободным (false)
+        rootPart.Anchored = false   -- <--- теперь false
+
+        -- Принудительно завершаем корутину
         if farmCoroutine then
             coroutine.close(farmCoroutine)
             farmCoroutine = nil
         end
 
-        toggleButton.Text = "АВТО ФАРМ (ВСЕ ПРЕДМЕТЫ)"
+        toggleButton.Text = "▶ Включить"
         toggleButton.BackgroundColor3 = Color3.new(0.2, 0.6, 0.2)
     end
 end)
@@ -298,7 +256,7 @@ closeButton.MouseButton1Click:Connect(function()
     stopRequested = true
     clearHighlights()
     if rootPart then
-        rootPart.Anchored = false
+        rootPart.Anchored = false   -- <--- теперь false
     end
     if farmCoroutine then
         coroutine.close(farmCoroutine)
