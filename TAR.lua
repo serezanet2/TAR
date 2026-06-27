@@ -1,4 +1,4 @@
--- LocalScript (Cli234324234ent)
+-- LocalScript (Client)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -39,12 +39,13 @@ local function getParentObject(prompt)
     return parent
 end
 
--- Проверка, нужно ли пропустить предмет (Blood Garlic, Oil)
+-- Пропускаем предметы, содержащие Blood, Garlic или Oil (любое из этих слов)
 local function shouldSkipItem(prompt)
     local obj = getParentObject(prompt)
     if not obj then return false end
     local lowerName = obj.Name:lower()
-    if lowerName:find("blood garlic") or lowerName:find("oil") then
+    -- Проверяем наличие любого из трёх слов
+    if lowerName:find("blood") or lowerName:find("garlic") or lowerName:find("oil") then
         return true
     end
     return false
@@ -128,7 +129,7 @@ local function farmCycle()
         rootPart.Anchored = false
 
         local allPrompts = getAllPrompts()
-        -- Фильтрация: убираем Blood Garlic и Oil
+        -- Фильтрация: убираем Blood, Garlic, Oil
         local prompts = {}
         for _, prompt in ipairs(allPrompts) do
             if not shouldSkipItem(prompt) then
@@ -138,7 +139,7 @@ local function farmCycle()
 
         if #prompts > 0 then
             clearHighlights()
-            -- Подсветка: красный для ящиков, зелёный для остальных
+            -- Подсветка: красный для ящиков (box), зелёный для остальных
             for _, prompt in ipairs(prompts) do
                 local obj = getParentObject(prompt)
                 if obj then
@@ -171,7 +172,6 @@ local function farmCycle()
         end
     end
 
-    -- Завершение: убираем подсветку и освобождаем персонажа
     clearHighlights()
     rootPart.Anchored = false
 end
@@ -248,7 +248,6 @@ closeCorner.Parent = closeButton
 
 toggleButton.MouseButton1Click:Connect(function()
     if not isFarming then
-        -- Включение
         isFarming = true
         stopRequested = false
         toggleButton.Text = "⏹ Остановить"
@@ -259,7 +258,6 @@ toggleButton.MouseButton1Click:Connect(function()
         farmCoroutine = coroutine.create(farmCycle)
         coroutine.resume(farmCoroutine)
     else
-        -- Выключение – персонаж полностью свободен
         isFarming = false
         stopRequested = true
 
