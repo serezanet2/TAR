@@ -3,12 +3,15 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
 local rootPart = character:WaitForChild("HumanoidRootPart")
-local humanoid = character:WaitForChild("Humanoid")
 
--- Переменные состояния
-local isFarming = false          -- флаг работы автофарма
-local returnPosition = nil       -- точка возврата
-local farmCoroutine = nil        -- ссылка на корутину цикла
+-- Состояния
+local isFarming = false
+local returnPosition = nil
+local currentHighlights = {}
+local farmCoroutine = nil
+local stopRequested = false
+
+-- ====== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ======
 
 -- Поиск всех ProximityPrompt внутри workspace.Cups (рекурсивно)
 local function getAllPrompts()
@@ -21,12 +24,51 @@ local function getAllPrompts()
             if child:IsA("ProximityPrompt") then
                 table.insert(prompts, child)
             else
-                search(child) -- рекурсивный обход
+                search(child)
             end
         end
     end
     search(cups)
     return prompts
+end
+
+-- Получение родительского объекта (Tool/Model) для промпта
+local function getParentObject(prompt)
+    local parent = prompt.Parent
+    while parent and parent:IsA("BasePart") do
+        parent = parent.Parent
+    end
+    return parent
+end
+
+-- Создание Highlight для объекта
+local function createHighlight(obj)
+    if not obj then return nil end
+    -- Проверяем, есть ли уже Highlight
+    for _, child in ipairs(obj:GetChildren()) do
+        if child:IsA("Highlight") and child.Name == "FarmHighlight" then
+            return child
+        end
+    end
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "FarmHighlight"
+    highlight.FillColor = Color3.new(0, 0, 0)
+    highlight.FillTransparency = 0.5
+    highlight.OutlineColor = Color3.new(0, 1, 0)
+    highlight.OutlineTransparency = 0
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = obj
+    return highlight
+end
+
+-- Удаление всех Highlight (сессии)
+local function clearHighlights()
+    for _, highlight in ipairs(currentHighlights) do
+        if highlight and highlight.Parent then
+            highlight:Destroy()
+        end
+    end
+    currentHighlights = {}
 end
 
 -- Получение позиции для телепортации к промпту
@@ -35,7 +77,6 @@ local function getTargetPosition(prompt)
     if parent:IsA("BasePart") then
         return parent.Position
     else
-        -- Ищем Handle или PrimaryPart
         local handle = parent:FindFirstChild("Handle")
         if handle and handle:IsA("BasePart") then
             return handle.Position
@@ -44,7 +85,6 @@ local function getTargetPosition(prompt)
         if primary and primary:IsA("BasePart") then
             return primary.Position
         end
-        -- Иначе ищем любую BasePart внутри
         for _, child in ipairs(parent:GetDescendants()) do
             if child:IsA("BasePart") then
                 return child.Position
@@ -54,89 +94,184 @@ local function getTargetPosition(prompt)
     return nil
 end
 
--- Симуляция удержания промпта (с телепортацией)
+-- Симуляция удержания промпта
 local function activatePrompt(prompt)
     local targetPos = getTargetPosition(prompt)
     if not targetPos then return false end
 
-    -- Телепортируемся к цели (с небольшим смещением вверх)
     local offset = Vector3.new(0, 3, 0)
     rootPart.CFrame = CFrame.new(targetPos + offset)
-    task.wait(0.1) -- даём время на телепорт
+    task.wait(0.1)
 
-    -- Имитация нажатия и удержания
     prompt:InputHoldBegin()
-    task.wait(prompt.HoldDuration) -- ждём, пока удержание завершится
+    task.wait(prompt.HoldDuration)
     prompt:InputHoldEnd()
     return true
 end
 
--- Основной цикл фарма
+-- ====== ОСНОВНОЙ ЦИКЛ ФАРМА ======
+
 local function farmCycle()
-    while isFarming do
-        -- 1. Сканируем каждые 10 секунд
+    while isFarming and not stopRequested do
+        -- 1. Открепляем root перед сессией
+        rootPart.Anchored = false
+
+        -- 2. Сканируем промпты
         local prompts = getAllPrompts()
         if #prompts > 0 then
+            -- 3. Создаём Highlight для каждого родительского объекта
+            clearHighlights() -- на всякий случай
             for _, prompt in ipairs(prompts) do
-                if not isFarming then break end -- остановка при выключении
+                local obj = getParentObject(prompt)
+                if obj then
+                    local hl = createHighlight(obj)
+                    if hl then table.insert(currentHighlights, hl) end
+                end
+            end
 
-                -- Активируем промпт
+            -- 4. Обрабатываем каждый промпт
+            for _, prompt in ipairs(prompts) do
+                if not isFarming or stopRequested then break end
                 activatePrompt(prompt)
-
-                -- Возвращаемся в исходную точку
                 if returnPosition then
                     rootPart.CFrame = CFrame.new(returnPosition)
                 end
-
-                task.wait(0.1) -- пауза 0.1 сек между промптами
+                task.wait(0.1)
             end
+
+            -- 5. Удаляем сессию (все Highlight)
+            clearHighlights()
+
+            -- 6. Ждём 0.2 секунды
+            task.wait(0.2)
+
+            -- 7. Закрепляем root
+            rootPart.Anchored = true
+
+        else
+            -- Если промптов нет, сразу закрепляем
+            rootPart.Anchored = true
         end
 
-        -- Ждём 10 секунд до следующего сканирования (с возможностью прерывания)
+        -- 8. Ждём 5 секунд до следующего сканирования
         local elapsed = 0
-        while elapsed < 10 and isFarming do
+        while elapsed < 5 and isFarming and not stopRequested do
             task.wait(1)
             elapsed = elapsed + 1
         end
     end
+
+    -- Если вышли из цикла (остановка) – чистим и закрепляем
+    clearHighlights()
+    rootPart.Anchored = true
 end
 
 -- ====== СОЗДАНИЕ GUI ======
+
 local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "AdminPanel"
+screenGui.ResetOnSpawn = false
 screenGui.Parent = player:WaitForChild("PlayerGui")
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 200, 0, 100)
-frame.Position = UDim2.new(0.5, -100, 0.5, -50)
-frame.BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)
+frame.Size = UDim2.new(0, 280, 0, 160)
+frame.Position = UDim2.new(0.5, -140, 0.5, -80)
+frame.BackgroundColor3 = Color3.new(0.15, 0.15, 0.15)
+frame.BackgroundTransparency = 0.1
+frame.BorderSizePixel = 0
+frame.ClipsDescendants = true
 frame.Parent = screenGui
 
-local button = Instance.new("TextButton")
-button.Size = UDim2.new(0, 180, 0, 50)
-button.Position = UDim2.new(0.5, -90, 0.5, -25)
-button.Text = "Включить авто фарм"
-button.BackgroundColor3 = Color3.new(0.3, 0.8, 0.3)
-button.Parent = frame
+local gradient = Instance.new("UIGradient")
+gradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.new(0.1, 0.2, 0.4)),
+    ColorSequenceKeypoint.new(1, Color3.new(0.2, 0.1, 0.3))
+})
+gradient.Rotation = 45
+gradient.Parent = frame
 
--- Обработка нажатия на кнопку
-button.MouseButton1Click:Connect(function()
-    isFarming = not isFarming
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 12)
+corner.Parent = frame
 
-    if isFarming then
-        button.Text = "Выключить авто фарм"
-        button.BackgroundColor3 = Color3.new(0.8, 0.3, 0.3)
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 30)
+title.Position = UDim2.new(0, 0, 0, 5)
+title.BackgroundTransparency = 1
+title.Text = "🔹 AUTO FARM 🔹"
+title.TextColor3 = Color3.new(1, 1, 1)
+title.TextScaled = true
+title.Font = Enum.Font.GothamBold
+title.Parent = frame
 
-        -- Запоминаем текущую позицию как точку возврата
+local toggleButton = Instance.new("TextButton")
+toggleButton.Size = UDim2.new(0, 200, 0, 40)
+toggleButton.Position = UDim2.new(0.5, -100, 0.5, -20)
+toggleButton.BackgroundColor3 = Color3.new(0.2, 0.6, 0.2)
+toggleButton.Text = "▶ Включить"
+toggleButton.TextColor3 = Color3.new(1, 1, 1)
+toggleButton.TextScaled = true
+toggleButton.Font = Enum.Font.GothamSemibold
+toggleButton.BorderSizePixel = 0
+toggleButton.Parent = frame
+
+local btnCorner = Instance.new("UICorner")
+btnCorner.CornerRadius = UDim.new(0, 8)
+btnCorner.Parent = toggleButton
+
+local closeButton = Instance.new("TextButton")
+closeButton.Size = UDim2.new(0, 30, 0, 30)
+closeButton.Position = UDim2.new(1, -40, 0, 5)
+closeButton.BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)
+closeButton.Text = "✕"
+closeButton.TextColor3 = Color3.new(1, 1, 1)
+closeButton.TextScaled = true
+closeButton.Font = Enum.Font.GothamBold
+closeButton.BorderSizePixel = 0
+closeButton.Parent = frame
+
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 8)
+closeCorner.Parent = closeButton
+
+-- ====== ОБРАБОТЧИКИ КНОПОК ======
+
+toggleButton.MouseButton1Click:Connect(function()
+    if not isFarming then
+        -- Включаем
+        isFarming = true
+        stopRequested = false
+        toggleButton.Text = "⏹ Остановить"
+        toggleButton.BackgroundColor3 = Color3.new(0.6, 0.2, 0.2)
+
         returnPosition = rootPart.Position
 
-        -- Запускаем цикл в отдельной корутине
         if farmCoroutine then coroutine.close(farmCoroutine) end
         farmCoroutine = coroutine.create(farmCycle)
         coroutine.resume(farmCoroutine)
     else
-        button.Text = "Включить авто фарм"
-        button.BackgroundColor3 = Color3.new(0.3, 0.8, 0.3)
-        -- Остановка произойдёт автоматически (флаг isFarming = false)
-        farmCoroutine = nil
+        -- Выключаем
+        isFarming = false
+        stopRequested = true
+        toggleButton.Text = "▶ Включить"
+        toggleButton.BackgroundColor3 = Color3.new(0.2, 0.6, 0.2)
     end
 end)
+
+closeButton.MouseButton1Click:Connect(function()
+    isFarming = false
+    stopRequested = true
+    clearHighlights()
+    if rootPart then
+        rootPart.Anchored = true
+    end
+    if farmCoroutine then
+        coroutine.close(farmCoroutine)
+        farmCoroutine = nil
+    end
+    screenGui:Destroy()
+end)
+
+-- Делаем окно перетаскиваемым
+frame.Active = true
+frame.Draggable = true
