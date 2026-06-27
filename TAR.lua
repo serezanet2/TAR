@@ -1,17 +1,4 @@
--- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V3.2) ]] --
--- Изменения V3.2:
---  * Игнор уже открытых боксов (после открытия — в PermanentBoxBlacklist, не сбрасывается)
---  * При запуске фарма сохраняются ВСЕ предметы инвентаря как OriginalTools
---  * При дропе OriginalTools НЕ трогаются (не перемещаются, не сбрасываются)
---  * РАНДОМНЫЙ порядок перемещения тулов в Character (shuffle, один за другим)
--- Изменения V3.1:
---  * Сохраняется ПОЛНЫЙ CFrame (позиция + поворот) HumanoidRootPart
---  * После возврата — проверка что мы на сохранённой позиции (дистанция < 0.5)
---  * Анкорим HRP на сохранённой позиции через Anchored
---  * Все предметы из Backpack → Character
---  * ЖОСКИЙ Backspace через VirtualInputManager (key down + key up)
---  * Только после подтверждения что мы на исходной точке
---  * После дропа — снимаем анкор
+-- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V3.0) ]] --
 -- Изменения V3.0:
 --  * Игнор боксов с "supply" в имени (Supply Box и т.п.) — в blacklist автоматически
 --  * После возврата к исходной точке — DROP всех собранных тулов на землю
@@ -53,7 +40,6 @@
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
 local RS = game:GetService("RunService")
-local VIM = game:GetService("VirtualInputManager")  -- V3.1: для симуляции Backspace
 local LocalPlayer = Players.LocalPlayer
 
 _G.CupBoxFarmActive = false
@@ -63,10 +49,6 @@ _G.ScriptAlive = true  -- V2.6: флаг живости для остановк�
 -- ===== НАСТРОЙКИ ТАЙМИНГОВ =====
 local SCAN_INTERVAL = 5      -- Сканирование Workspace каждые 5 сек
 local PICKUP_INTERVAL = 0.1  -- Подбор найденных предметов каждые 0.1 сек
-
--- V3.1: максимальная допустимая дистанция от сохранённой позиции
--- (если дальше — не дропаем, ждём пока персонаж вернётся)
-local MAX_RETURN_DISTANCE = 0.5  -- studs
 
 -- Ключевые слова для поиска инструментов (case-insensitive)
 local TOOL_KEYWORDS = { "cup", "genesis", "gold", "silver", "copper" }
@@ -84,12 +66,6 @@ end
 -- Blacklist по Instance reference
 local Blacklist = setmetatable({}, { __mode = "k" })
 
--- V3.2: Постоянный blacklist для уже открытых боксов (не сбрасывается кнопкой очистки)
-local PermanentBoxBlacklist = setmetatable({}, { __mode = "k" })
-
--- V3.2: Предметы, которые были в инвентаре при запуске фарма (НЕ трогаем при дропе)
-local OriginalTools = setmetatable({}, { __mode = "k" })  -- ключи = Tool instances
-
 -- Очередь обнаруженных целей (заполняется каждые 5 сек, обрабатывается каждые 0.1 сек)
 local TargetsQueue = {}
 
@@ -101,8 +77,8 @@ ScreenGui.ResetOnSpawn = false
 
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 240, 0, 280)
-MainFrame.Position = UDim2.new(0.5, -120, 0.4, -140)
+MainFrame.Size = UDim2.new(0, 220, 0, 230)
+MainFrame.Position = UDim2.new(0.5, -110, 0.4, -115)
 MainFrame.BackgroundColor3 = Color3.fromRGB(20, 25, 35)
 MainFrame.BorderSizePixel = 2
 MainFrame.BorderColor3 = Color3.fromRGB(0, 230, 118)
@@ -116,7 +92,7 @@ Corner.Parent = MainFrame
 
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -28, 0, 28)
-TitleLabel.Text = "TMI V3.2 - SkipOrig+Shuffle"
+TitleLabel.Text = "TMI V3.0 - Drop & Skip Supply"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.BackgroundColor3 = Color3.fromRGB(30, 35, 45)
 TitleLabel.Font = Enum.Font.GothamBold
@@ -188,20 +164,9 @@ local ClearCorner = Instance.new("UICorner")
 ClearCorner.CornerRadius = UDim.new(0, 4)
 ClearCorner.Parent = ClearBlacklistButton
 
--- ===== V3.1: ИНФО-МЕТКА О РЕЖИМЕ ДРОПА =====
-local DropModeLabel = Instance.new("TextLabel")
-DropModeLabel.Size = UDim2.new(0, 200, 0, 22)
-DropModeLabel.Position = UDim2.new(0.5, -100, 0, 150)
-DropModeLabel.Text = "Drop: Shuffle + Skip Original"
-DropModeLabel.TextColor3 = Color3.fromRGB(0, 230, 180)
-DropModeLabel.BackgroundTransparency = 1
-DropModeLabel.Font = Enum.Font.Gotham
-DropModeLabel.TextSize = 10
-DropModeLabel.Parent = MainFrame
-
 local StatusLabel = Instance.new("TextLabel")
-StatusLabel.Size = UDim2.new(1, -10, 0, 60)
-StatusLabel.Position = UDim2.new(0, 5, 0, 176)
+StatusLabel.Size = UDim2.new(1, -10, 0, 50)
+StatusLabel.Position = UDim2.new(0, 5, 0, 152)
 StatusLabel.Text = "Ожидание запуска..."
 StatusLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
 StatusLabel.BackgroundTransparency = 1
@@ -244,192 +209,9 @@ local function isInsideOtherPlayer(tool)
     return false
 end
 
--- =====================================================================
--- V3.2: СНЭПШОТ ИНВЕНТАРЯ ПРИ ЗАПУСКЕ ФАРМА
--- Сохраняет все Tool которые уже есть у игрока (Backpack + Character).
--- Эти предметы НИКОГДА не будут перемещены или сброшены при дропе.
--- =====================================================================
-local function snapshotOriginalTools()
-    OriginalTools = setmetatable({}, { __mode = "k" })
-    local backpack = LocalPlayer:FindFirstChild("Backpack")
-    local character = LocalPlayer.Character
-
-    local count = 0
-    -- Из Backpack
-    if backpack then
-        for _, tool in pairs(backpack:GetChildren()) do
-            if tool:IsA("Tool") then
-                OriginalTools[tool] = true
-                count = count + 1
-            end
-        end
-    end
-    -- Из Character (в руках)
-    if character then
-        for _, tool in pairs(character:GetChildren()) do
-            if tool:IsA("Tool") then
-                OriginalTools[tool] = true
-                count = count + 1
-            end
-        end
-    end
-
-    StatusLabel.Text = string.format("🔒 Запомнено %d ориг. предметов", count)
-    StatusLabel.TextColor3 = Color3.fromRGB(255, 200, 80)
-    return count
-end
-
--- =====================================================================
--- V3.2: SHUFFLE хелпер — перемешивает массив (Fisher-Yates)
--- =====================================================================
-local function shuffleArray(tbl)
-    local n = #tbl
-    for i = n, 2, -1 do
-        local j = math.random(1, i)
-        tbl[i], tbl[j] = tbl[j], tbl[i]
-    end
-    return tbl
-end
-
--- =====================================================================
--- V3.2: НОВАЯ ФУНКЦИЯ ДРОПА С АНКОРОМ И BACKSPACE
--- =====================================================================
--- Порядок действий:
---  1. Проверяем что мы на сохранённой позиции (дистанция < MAX_RETURN_DISTANCE)
---  2. Анкорим HRP через Anchored = true
---  3. Перемещаем ВСЕ предметы из Backpack в Character
---  4. ЖОСКО жмём Backspace через VirtualInputManager (key down → wait → key up)
---  5. Снимаем анкор
---  6. Возвращаем количество сброшенных тулов
--- =====================================================================
-local function dropInventoryAtSavedPosition(savedCFrame)
-    local character = LocalPlayer.Character
-    if not character then return 0 end
-    local hrp = character:FindFirstChild("HumanoidRootPart")
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    local backpack = LocalPlayer:FindFirstChild("Backpack")
-    if not hrp or not humanoid or not backpack then return 0 end
-
-    -- === ШАГ 1: Проверка что мы на сохранённой позиции ===
-    local currentPos = hrp.Position
-    local savedPos = savedCFrame.Position
-    local distance = (currentPos - savedPos).Magnitude
-
-    if distance > MAX_RETURN_DISTANCE then
-        -- Мы не на месте! Сначала телепортируемся точно на сохранённый CFrame
-        StatusLabel.Text = string.format("⚠ Возврат... (dist=%.1f)", distance)
-        StatusLabel.TextColor3 = Color3.fromRGB(255, 180, 60)
-        hrp.CFrame = savedCFrame  -- восстанавливаем И позицию И поворот
-        task.wait(0.1)
-        -- Перепроверяем
-        distance = (hrp.Position - savedPos).Magnitude
-        if distance > MAX_RETURN_DISTANCE then
-            StatusLabel.Text = "❌ Не могу вернуться! Пропускаю дроп."
-            StatusLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
-            return 0
-        end
-    end
-
-    StatusLabel.Text = "📌 Анкорю на сохр. CFrame..."
-    StatusLabel.TextColor3 = Color3.fromRGB(100, 220, 255)
-
-    -- === ШАГ 2: Анкорим HRP ===
-    local wasAnchored = hrp.Anchored
-    hrp.Anchored = true
-
-    -- Ещё раз фиксируем точный CFrame (позиция + поворот)
-    hrp.CFrame = savedCFrame
-
-    -- === ШАГ 3: Перемещаем НОВЫЕ предметы из Backpack в Character ===
-    -- V3.2: Собираем Tool'ы, исключая OriginalTools, потом ШАФЛИМ порядок
-    local newTools = {}  -- список {tool} — только те, которых не было при старте
-    local skippedOriginals = 0
-
-    for _, tool in pairs(backpack:GetChildren()) do
-        if tool:IsA("Tool") then
-            if OriginalTools[tool] then
-                -- Этот предмет был у игрока до запуска фарма — НЕ ТРОГАЕМ
-                skippedOriginals = skippedOriginals + 1
-            else
-                table.insert(newTools, tool)
-            end
-        end
-    end
-
-    -- V3.2: РАНДОМНЫЙ порядок перемещения (Fisher-Yates shuffle)
-    shuffleArray(newTools)
-
-    local toolsMoved = 0
-    for _, tool in ipairs(newTools) do
-        if tool.Parent then  -- ещё не перемещён?
-            pcall(function()
-                tool.Parent = character
-                toolsMoved = toolsMoved + 1
-            end)
-            task.wait(0.02)  -- микро-пауза между перемещениями
-        end
-    end
-
-    -- HopperBin'ы: тоже исключаем оригинальные
-    for _, bin in pairs(backpack:GetChildren()) do
-        if bin:IsA("HopperBin") then
-            if not OriginalTools[bin] then
-                pcall(function()
-                    bin.Parent = character
-                end)
-            end
-        end
-    end
-
-    StatusLabel.Text = string.format("📦 %d новых → Char (пропущено %d ориг.)", toolsMoved, skippedOriginals)
-    StatusLabel.TextColor3 = Color3.fromRGB(180, 230, 255)
-
-    -- === ШАГ 4: ЖОСКИЙ BACKSPACE ===
-    -- KeyDown Backspace
-    pcall(function()
-        VIM:SendKeyEvent(true, Enum.KeyCode.Backspace, false, game)
-    end)
-    task.wait(0.08)
-
-    -- KeyUp Backspace
-    pcall(function()
-        VIM:SendKeyEvent(false, Enum.KeyCode.Backspace, false, game)
-    end)
-    task.wait(0.08)
-
-    -- Дополнительно: второй прожим для надёжности (некоторые тулы требуют двойного нажатия)
-    pcall(function()
-        VIM:SendKeyEvent(true, Enum.KeyCode.Backspace, false, game)
-    end)
-    task.wait(0.05)
-    pcall(function()
-        VIM:SendKeyEvent(false, Enum.KeyCode.Backspace, false, game)
-    end)
-    task.wait(0.05)
-
-    -- === ШАГ 5: Снимаем анкор ===
-    hrp.Anchored = wasAnchored
-
-    -- === ШАГ 6: Подсчитываем сколько тулов сброшено в Workspace ===
-    local droppedCount = 0
-    for _, child in pairs(workspace:GetChildren()) do
-        if child:IsA("Tool") then
-            droppedCount = droppedCount + 1
-        end
-    end
-
-    StatusLabel.Text = string.format("📤 Сброшено %d тулз (BS на CFrame)", droppedCount)
-    StatusLabel.TextColor3 = Color3.fromRGB(0, 230, 118)
-
-    return droppedCount
-end
-
--- =====================================================================
--- V3.0 (сохранена для обратной совместимости):
--- Простой сброс через UnequipTools без анкора и Backspace.
--- Используется только если новый метод не нужен.
--- =====================================================================
-local function dropAllToolsSimple()
+-- V3.0: Сбрасывает все тулы (включая те что в руке) из инвентаря игрока в Workspace.
+-- Используется после возврата к исходной позиции — освобождает Backpack от собранного.
+local function dropAllTools()
     local character = LocalPlayer.Character
     if not character then return 0 end
     local humanoid = character:FindFirstChildOfClass("Humanoid")
@@ -438,14 +220,17 @@ local function dropAllToolsSimple()
 
     local droppedCount = 0
 
+    -- 1. Сначала перекидываем тулы из Backpack в Character, чтоб humanoid:UnequipTools() мог их сбросить
     for _, tool in pairs(backpack:GetChildren()) do
         if tool:IsA("Tool") then
             pcall(function() tool.Parent = character end)
         end
     end
 
+    -- 2. UnequipTools() вызывает .Dropped на всех тулах в Character и сбрасывает их в Workspace
     pcall(function() humanoid:UnequipTools() end)
 
+    -- 3. Дополнительно: считаем сколько сбросили (для лога/статуса)
     for _, child in pairs(workspace:GetChildren()) do
         if child:IsA("Tool") then
             droppedCount = droppedCount + 1
@@ -487,8 +272,7 @@ local function scanWorkspace()
                     Blacklist[obj] = true
                     continue
                 end
-                -- V3.2: проверяем оба блеклиста
-                if Blacklist[obj] or PermanentBoxBlacklist[obj] then continue end
+                if Blacklist[obj] then continue end
 
                 local prompt = nil
                 for _, descendant in pairs(obj:GetDescendants()) do
@@ -499,11 +283,7 @@ local function scanWorkspace()
                 end
 
                 if prompt then
-                    if isShopPrompt(prompt) then
-                        Blacklist[obj] = true
-                        PermanentBoxBlacklist[obj] = true
-                        continue
-                    end
+                    if isShopPrompt(prompt) then Blacklist[obj] = true; continue end
 
                     local targetPos = nil
                     if obj:IsA("Model") and obj.PrimaryPart then
@@ -573,7 +353,7 @@ local function processQueue()
     local character = LocalPlayer.Character
     if not character then return end
     local hrp = character:FindFirstChild("HumanoidRootPart")
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    local humanoid = character:FindFirstChild("Humanoid")
     if not hrp or not humanoid then return end
 
     -- V2.8: БОКСЫ В ПРИОРИТЕТЕ. Сначала ищем box в очереди, и только если их нет — берём tool.
@@ -594,13 +374,9 @@ local function processQueue()
 
     -- Устанавливаем флаг занятости. Снимем его в конце через ok/err-обёртку.
     processingBusy = true
-
-    -- =====================================================================
-    -- V3.1: СОХРАНЯЕМ ПОЛНЫЙ CFrame (позиция + поворот) ДО телепорта
-    -- =====================================================================
-    local originalCFrame = hrp.CFrame  -- CFrame хранит И позицию И ориентацию
-
     local ok, err = pcall(function()
+        local originalCFrame = hrp.CFrame
+
         if target.type == "tool" then
             if Blacklist[target.obj] then return end
             if isInPlayerInventory(target.obj) then
@@ -621,19 +397,13 @@ local function processQueue()
             task.wait(0.05)
             pcall(function() humanoid:EquipTool(target.obj) end)
             task.wait(0.03)
+            hrp.CFrame = originalCFrame
 
-            -- =========================================================
-            -- V3.1: ВОЗВРАТ НА СОХРАНЁННЫЙ CFrame (позиция + поворот)
-            -- =========================================================
-            hrp.CFrame = originalCFrame  -- восстанавливаем и позицию и ротейт!
+            -- V3.0: после возврата к исходной точке — сбрасываем все собранные тулы на землю
             task.wait(0.05)
-
-            -- =========================================================
-            -- V3.1: ДРОП ЧЕРЕЗ АНКОР + BACKSPACE (только на сохр. позиции)
-            -- =========================================================
-            local dropped = dropInventoryAtSavedPosition(originalCFrame)
+            local dropped = dropAllTools()
             if dropped > 0 then
-                StatusLabel.Text = string.format("📤 Сброшено %d тулз (BS)", dropped)
+                StatusLabel.Text = string.format("📤 Сброшено %d тулз", dropped)
             end
 
         elseif target.type == "box" then
@@ -725,11 +495,7 @@ local function processQueue()
 
             -- Снимаем анкор и возвращаемся
             hrp.Anchored = wasAnchored
-
-            -- =========================================================
-            -- V3.1: ВОЗВРАТ НА СОХРАНЁННЫЙ CFrame (позиция + поворот)
-            -- =========================================================
-            hrp.CFrame = originalCFrame  -- восстанавливаем и позицию и ротейт!
+            hrp.CFrame = originalCFrame
 
             if triggered then
                 StatusLabel.Text = "✓ Открыт: " .. target.obj.Name
@@ -739,15 +505,12 @@ local function processQueue()
                 StatusLabel.TextColor3 = Color3.fromRGB(220, 200, 100)
             end
             Blacklist[target.obj] = true
-            PermanentBoxBlacklist[target.obj] = true  -- V3.2: навсегда игнорим этот бокс
 
-            -- =========================================================
-            -- V3.2: ДРОП ЧЕРЕЗ АНКОР + BACKSPACE (только на сохр. позиции)
-            -- =========================================================
+            -- V3.0: после возврата к исходной точке — сбрасываем все собранные тулы на землю
             task.wait(0.1)
-            local dropped = dropInventoryAtSavedPosition(originalCFrame)
+            local dropped = dropAllTools()
             if dropped > 0 then
-                StatusLabel.Text = string.format("📤 Сброшено %d тулз после бокса (BS)", dropped)
+                StatusLabel.Text = string.format("📤 Сброшено %d тулз после бокса", dropped)
             end
         end
     end)
@@ -756,15 +519,7 @@ local function processQueue()
     processingBusy = false
 
     if not ok then
-        warn("[TMI V3.2] processQueue error: " .. tostring(err))
-        -- На случай ошибки: снимаем анкор с HRP
-        pcall(function()
-            local char = LocalPlayer.Character
-            if char then
-                local hrp = char:FindFirstChild("HumanoidRootPart")
-                if hrp then hrp.Anchored = false end
-            end
-        end)
+        warn("[TMI V2.7] processQueue error: " .. tostring(err))
     end
 end
 
@@ -855,16 +610,12 @@ ToggleButton.MouseButton1Click:Connect(function()
     if _G.CupBoxFarmActive then
         ToggleButton.Text = "Farm: ON"
         ToggleButton.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
-
-        -- V3.2: Сохраняем снэпшот инвентаря (эти предметы трогать нельзя)
-        local origCount = snapshotOriginalTools()
-        StatusLabel.Text = string.format("Farm ON. 🔒%d ориг. предметов защищено", origCount)
+        StatusLabel.Text = "Farm Enabled. Скан каждые 5с, подбор каждые 0.1с"
         StatusLabel.TextColor3 = Color3.fromRGB(0, 230, 118)
     else
         ToggleButton.Text = "Farm: OFF"
         ToggleButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
         TargetsQueue = {}
-        -- V3.2: при выключении НЕ сбрасываем OriginalTools — они нужны если снова включим
         StatusLabel.Text = "Farm Disabled"
         StatusLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
     end
@@ -875,8 +626,7 @@ FreeCamButton.MouseButton1Click:Connect(toggleFreeCam)
 ClearBlacklistButton.MouseButton1Click:Connect(function()
     Blacklist = setmetatable({}, { __mode = "k" })
     TargetsQueue = {}
-    -- V3.2: PermanentBoxBlacklist НЕ очищается — уже открытые боксы навсегда игнорим
-    StatusLabel.Text = "Blacklist очищен (откр. боксы — навсегда)"
+    StatusLabel.Text = "Blacklist очищен!"
     StatusLabel.TextColor3 = Color3.fromRGB(255, 200, 80)
 end)
 
@@ -894,11 +644,9 @@ local function destroyScript()
         pcall(stopFreeCam)
     end
 
-    -- 3. Чистим очередь и blacklist'ы
+    -- 3. Чистим очередь и blacklist
     TargetsQueue = {}
     Blacklist = setmetatable({}, { __mode = "k" })
-    PermanentBoxBlacklist = setmetatable({}, { __mode = "k" })
-    OriginalTools = setmetatable({}, { __mode = "k" })
 
     -- 4. Отключаем коннекшены клавиатуры
     if fInputConn then
