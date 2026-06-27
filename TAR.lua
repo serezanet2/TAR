@@ -1,15 +1,9 @@
 --[[
-	Отдельный скрипт для авто-фарма чаш, кубков, ящиков через ProximityPrompt.
-	Особенности:
-	- Перемещаемое окно с кнопкой скрытия/показа.
-	- В окне 2 кнопки: Auto Farm (вкл/выкл) и Close (закрыть GUI).
-	- Auto Farm каждые 5 секунд сканирует рабочую область, находит модели с именами
-	  cup, Cup, genesis (чаши/кубки) и box, Box (ящики).
-	- Чаши игнорируются, если:
-	  * они находятся в руках любого игрока (родитель – Character)
-	  * их ProximityPrompt содержит символ '$' (доллар).
-	- При нахождении допустимой цели телепортируется к ней, активирует Prompt.
-	- Подбор происходит каждые 0.1 секунды между целями.
+	Отдельный скрипт: авто-фарм чаш, кубков, ящиков через ProximityPrompt.
+	- Сохраняет позицию игрока, возвращается на неё после сбора всех целей.
+	- Ждёт 5 секунд после завершения сессии и начинает новое сканирование.
+	- Телепортируется точно к PrimaryPart модели (или к первому найденному BasePart),
+	  чтобы избежать проваливания под карту.
 --]]
 
 local Players = game:GetService("Players")
@@ -47,7 +41,7 @@ titleLabel.TextSize = 14
 titleLabel.TextXAlignment = Enum.TextXAlignment.Left
 titleLabel.Parent = mainFrame
 
--- Кнопка сворачивания/разворачивания контента
+-- Кнопка сворачивания/разворачивания
 local toggleBtn = Instance.new("TextButton")
 toggleBtn.Size = UDim2.new(0, 30, 0, 30)
 toggleBtn.Position = UDim2.new(0, 170, 0, 0)
@@ -58,7 +52,6 @@ toggleBtn.Font = Enum.Font.GothamBold
 toggleBtn.TextSize = 24
 toggleBtn.Parent = mainFrame
 
--- Контент-фрейм с кнопками
 local contentFrame = Instance.new("Frame")
 contentFrame.Size = UDim2.new(1, 0, 0, 80)
 contentFrame.Position = UDim2.new(0, 0, 0, 35)
@@ -118,7 +111,7 @@ end)
 local autoFarmActive = false
 local scanCoroutine = nil
 
--- Функция проверки, является ли модель инструментом в руках игрока
+-- Функция проверки, находится ли модель в руках игрока (в Character любого игрока)
 local function isInAnyCharacter(model)
 	for _, plr in pairs(Players:GetPlayers()) do
 		local char = plr.Character
@@ -129,7 +122,7 @@ local function isInAnyCharacter(model)
 	return false
 end
 
--- Функция проверки, содержит ли Prompt символ доллара
+-- Проверка на символ '$' в ProximityPrompt
 local function promptHasDollar(model)
 	for _, desc in pairs(model:GetDescendants()) do
 		if desc:IsA("ProximityPrompt") then
@@ -142,6 +135,21 @@ local function promptHasDollar(model)
 	return false
 end
 
+-- Получение корректной позиции модели (PrimaryPart или первый BasePart)
+local function getModelPosition(model)
+	if model.PrimaryPart then
+		return model.PrimaryPart.Position
+	end
+	-- ищем любой BasePart
+	for _, child in pairs(model:GetDescendants()) do
+		if child:IsA("BasePart") then
+			return child.Position
+		end
+	end
+	-- fallback: используем Pivot, если совсем ничего нет
+	return model:GetPivot().Position
+end
+
 -- Поиск всех подходящих целей
 local function findTargets()
 	local targets = {}
@@ -149,7 +157,7 @@ local function findTargets()
 		if obj:IsA("Model") then
 			local name = obj.Name
 			local lowerName = name:lower()
-			-- Ящики: содержит box
+			-- Ящики: box
 			if lowerName:find("box") then
 				-- ищем ProximityPrompt внутри
 				local hasPrompt = false
@@ -166,9 +174,9 @@ local function findTargets()
 			elseif lowerName:find("cup") or lowerName:find("genesis") then
 				-- Игнорируем, если в руках игрока
 				if isInAnyCharacter(obj) then continue end
-				-- Игнорируем, если есть промпт с долларом
+				-- Игнорируем, если промпт содержит доллар
 				if promptHasDollar(obj) then continue end
-				-- Нужен ли промпт для чаши? По условию подбираем через промпт, значит должен быть
+				-- Нужен промпт для взаимодействия
 				local hasPrompt = false
 				for _, d in pairs(obj:GetDescendants()) do
 					if d:IsA("ProximityPrompt") then
@@ -185,17 +193,17 @@ local function findTargets()
 	return targets
 end
 
--- Активация ближайшего ProximityPrompt у модели
+-- Активация первого найденного ProximityPrompt в модели
 local function activateModelPrompt(model)
 	for _, d in pairs(model:GetDescendants()) do
 		if d:IsA("ProximityPrompt") then
 			fireproximityprompt(d)
-			break -- активируем только первый
+			break
 		end
 	end
 end
 
--- Основной цикл сканирования и сбора
+-- Основной цикл: одна сессия = сбор всех текущих целей, затем возврат домой и пауза 5 сек
 local function autoFarmLoop()
 	while autoFarmActive do
 		local character = player.Character
@@ -209,30 +217,41 @@ local function autoFarmLoop()
 			continue
 		end
 
+		-- Сохраняем стартовую позицию
+		local startPosition = hrp.Position
+
 		local targets = findTargets()
 
 		if #targets > 0 then
-			-- Сортируем по расстоянию (опционально)
+			-- Сортируем по расстоянию от игрока (опционально)
 			table.sort(targets, function(a, b)
-				local posA = a.model:GetPivot().Position
-				local posB = b.model:GetPivot().Position
-				return (hrp.Position - posA).Magnitude < (hrp.Position - posB).Magnitude
+				local posA = getModelPosition(a.model)
+				local posB = getModelPosition(b.model)
+				return (startPosition - posA).Magnitude < (startPosition - posB).Magnitude
 			end)
 
+			-- Обходим все цели
 			for _, t in ipairs(targets) do
 				if not autoFarmActive then break end
 				local model = t.model
-				if model and model.Parent then -- проверка, что модель ещё существует
-					local targetPos = model:GetPivot().Position
+				if model and model.Parent then -- модель всё ещё существует
+					local targetPos = getModelPosition(model)
+					-- Телепорт к цели (чуть выше, чтобы не провалиться)
 					hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 3, 0))
-					wait(0.05) -- небольшая задержка перед активацией
+					wait(0.05) -- задержка, чтобы персонаж успел появиться
 					activateModelPrompt(model)
-					wait(0.1) -- задержка между подборами, как просили
+					wait(0.1) -- пауза между подборами
 				end
 			end
 		end
 
-		wait(5) -- пауза до следующего сканирования
+		-- Возвращаемся на исходную позицию
+		pcall(function()
+			hrp.CFrame = CFrame.new(startPosition)
+		end)
+
+		-- Ждём 5 секунд до следующего сканирования (следующей сессии)
+		wait(5)
 	end
 end
 
