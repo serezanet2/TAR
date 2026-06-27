@@ -1,13 +1,11 @@
 --[[
-	Auto Cup & Box Farm V3.1 (Debug)
-	- Поддержка новых чаш с ProximityPrompt (мгновенная активация)
-	- Возврат на исходную точку с закреплением
-	- Авто‑дроп через прямое перемещение предмета
-	- Отладочное окно: показывает состояние сканирования, цели, ошибки
+	Auto Cup & Box Farm V3.2 (Universal Cup Detection)
+	- Чаши теперь ищутся по наличию мгновенного ProximityPrompt (HoldDuration=0, нет '$'), а не только по имени.
+	- Старый поиск по ключевым словам оставлен для Tool-чаш.
+	- Улучшена отладка.
 --]]
 
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
 local farmActive = false
@@ -16,7 +14,7 @@ local scriptAlive = true
 local targetsQueue = {}
 local blacklist = setmetatable({}, { __mode = "k" })
 
--- GUI элементы (создадим позже, чтобы заполнять debugLabel)
+-- GUI элементы
 local gui, mainFrame, contentFrame
 local farmBtn, dropBtn, debugBtn, closeBtn
 local debugFrame, debugLabel
@@ -31,37 +29,89 @@ local function debugPrint(msg, color)
 	end
 end
 
--- Сканирование
+-- Сканирование (универсальный поиск чаш)
 local function scan()
 	local list = {}
-	local boxCount, cupCount = 0, 0
+	local boxCount = 0
+	local cupByPrompt = 0
+	local cupByTool = 0
+
+	-- 1. Боксы (Model/BasePart с "box", не "supply")
 	for _, obj in ipairs(workspace:GetDescendants()) do
+		if not (obj:IsA("Model") or obj:IsA("BasePart")) then continue end
 		local name = obj.Name:lower()
-		if name:find("box") and not name:find("supply") then
-			if blacklist[obj] then continue end
-			local prompt = hasPrompt(obj)
-			if prompt and not prompt.ActionText:find("$") then
-				table.insert(list, {type="box", obj=obj, pos=getModelPos(obj), prompt=prompt, dur=tonumber(prompt.HoldDuration) or 0})
-				boxCount = boxCount + 1
-			end
-		elseif name:find("cup") or name:find("genesis") or name:find("gold") or name:find("silver") or name:find("copper") then
-			if blacklist[obj] then continue end
-			local prompt = hasPrompt(obj)
-			if prompt then
-				table.insert(list, {type="prompt_cup", obj=obj, pos=getModelPos(obj), prompt=prompt})
-				cupCount = cupCount + 1
-			elseif obj:IsA("Tool") and not obj:FindFirstChildWhichIsA("Humanoid") then
-				local handle = obj:FindFirstChild("Handle")
-				if handle and not handle.Anchored then
-					table.insert(list, {type="tool", obj=obj, pos=handle.Position})
-					cupCount = cupCount + 1
-				end
-			end
+		if not name:find("box") then continue end
+		if name:find("supply") then
+			blacklist[obj] = true
+			continue
+		end
+		if blacklist[obj] then continue end
+
+		local prompt = hasPrompt(obj)
+		if prompt and not (prompt.ActionText and prompt.ActionText:find("$")) then
+			table.insert(list, {
+				type = "box",
+				obj = obj,
+				pos = getModelPos(obj),
+				prompt = prompt,
+				dur = tonumber(prompt.HoldDuration) or 0
+			})
+			boxCount = boxCount + 1
 		end
 	end
+
+	-- 2. Чаши через универсальный ProximityPrompt (любые объекты с HoldDuration=0 и без '$')
+	for _, obj in ipairs(workspace:GetDescendants()) do
+		if blacklist[obj] then continue end
+		local prompt = hasPrompt(obj)
+		if not prompt then continue end
+		if tonumber(prompt.HoldDuration) ~= 0 then continue end   -- только мгновенные
+		if prompt.ActionText and prompt.ActionText:find("$") then continue end
+		local name = obj.Name:lower()
+		if name:find("box") then continue end   -- боксы уже обработаны
+		-- Не добавляем повторно, если уже в списке (на всякий случай)
+		local alreadyInList = false
+		for _, t in ipairs(list) do
+			if t.obj == obj then alreadyInList = true break end
+		end
+		if not alreadyInList then
+			table.insert(list, {
+				type = "prompt_cup",
+				obj = obj,
+				pos = getModelPos(obj),
+				prompt = prompt
+			})
+			cupByPrompt = cupByPrompt + 1
+		end
+	end
+
+	-- 3. Чаши-инструменты (по ключевым словам, на случай старых Tool)
+	local keywords = { "cup", "genesis", "gold", "silver", "copper" }
+	for _, obj in ipairs(workspace:GetDescendants()) do
+		if blacklist[obj] then continue end
+		if not (obj:IsA("Tool") or obj:IsA("BackpackItem")) then continue end
+		local name = obj.Name:lower()
+		local matched = false
+		for _, kw in ipairs(keywords) do
+			if name:find(kw) then matched = true break end
+		end
+		if not matched then continue end
+		if obj:FindFirstChildWhichIsA("Humanoid") then continue end  -- инструмент в руках NPC?
+		local handle = obj:FindFirstChild("Handle")
+		if handle and not handle.Anchored then
+			table.insert(list, {
+				type = "tool",
+				obj = obj,
+				pos = handle.Position
+			})
+			cupByTool = cupByTool + 1
+		end
+	end
+
 	table.sort(list, function(a,b) return a.type=="box" and b.type~="box" end)
 	targetsQueue = list
-	debugPrint(string.format("Скан: %d боксов, %d чаш | Всего: %d", boxCount, cupCount, #list), Color3.fromRGB(200,200,255))
+	debugPrint(string.format("Скан: %d боксов | %d чаш(prompt) + %d чаш(tool) = всего %d",
+		boxCount, cupByPrompt, cupByTool, #list), Color3.fromRGB(200,200,255))
 end
 
 -- Обработка одной цели
@@ -78,7 +128,7 @@ local function process()
 
 	local target = table.remove(targetsQueue, 1)
 	local targetName = target.obj.Name
-	debugPrint("Цель: " .. targetName, Color3.fromRGB(255,255,200))
+	debugPrint("-> Цель: " .. targetName .. " (" .. target.type .. ")", Color3.fromRGB(255,255,200))
 
 	local ok, err = pcall(function()
 		if not target.obj or not target.obj.Parent then
@@ -91,12 +141,12 @@ local function process()
 			hrp.CFrame = CFrame.new(target.pos + Vector3.new(0,2,0))
 			task.wait(0.05)
 			hum:EquipTool(target.obj)
-			debugPrint("Подобран инструмент: " .. targetName, Color3.fromRGB(0,230,118))
+			debugPrint("Подобран: " .. targetName, Color3.fromRGB(0,230,118))
 		elseif target.type == "prompt_cup" then
 			hrp.CFrame = CFrame.new(target.pos + Vector3.new(0,2,0))
 			task.wait(0.05)
 			fireproximityprompt(target.prompt)
-			debugPrint("Активирована чаша: " .. targetName, Color3.fromRGB(0,230,118))
+			debugPrint("Чаша активирована: " .. targetName, Color3.fromRGB(0,230,118))
 		elseif target.type == "box" then
 			local prompt = target.prompt
 			local dur = target.dur + 0.5
@@ -113,7 +163,7 @@ local function process()
 			end
 			pcall(function() prompt:InputHoldEnd() end)
 			pcall(function() fireproximityprompt(prompt) end)
-			debugPrint("Открыт бокс: " .. targetName, Color3.fromRGB(0,200,200))
+			debugPrint("Бокс открыт: " .. targetName, Color3.fromRGB(0,200,200))
 		end
 	end)
 
@@ -121,7 +171,6 @@ local function process()
 		debugPrint("ОШИБКА: " .. tostring(err), Color3.fromRGB(255,50,50))
 	end
 
-	-- возврат и закрепление
 	task.wait(0.15)
 	pcall(function() if hrp.Parent then hrp.CFrame = origCFrame; if farmActive then hrp.Anchored = true end end end)
 end
@@ -170,7 +219,7 @@ local title = Instance.new("TextLabel", mainFrame)
 title.Size = UDim2.new(0,130,0,30)
 title.Position = UDim2.new(0,5,0,0)
 title.BackgroundTransparency = 1
-title.Text = "Cup & Box Farm V3.1"
+title.Text = "Cup & Box Farm V3.2"
 title.TextColor3 = Color3.fromRGB(220,220,220)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -238,10 +287,10 @@ closeBtn.Font = Enum.Font.GothamBold
 closeBtn.TextSize = 13
 Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0,6)
 
--- Отладочное окно (отдельное)
+-- Окно отладки
 debugFrame = Instance.new("Frame", gui)
 debugFrame.Size = UDim2.new(0, 250, 0, 120)
-debugFrame.Position = UDim2.new(0, 330, 0, 100)  -- справа от главного
+debugFrame.Position = UDim2.new(0, 330, 0, 100)
 debugFrame.BackgroundColor3 = Color3.fromRGB(10,10,20)
 debugFrame.BorderSizePixel = 1
 debugFrame.BorderColor3 = Color3.fromRGB(100,100,255)
@@ -271,7 +320,7 @@ debugLabel.TextWrapped = true
 debugLabel.TextXAlignment = Enum.TextXAlignment.Left
 debugLabel.TextYAlignment = Enum.TextYAlignment.Top
 
--- Обработчики кнопок
+-- Обработчики
 toggleBtn.MouseButton1Click:Connect(function()
 	contentFrame.Visible = not contentFrame.Visible
 	toggleBtn.Text = contentFrame.Visible and "-" or "+"
@@ -315,5 +364,4 @@ closeBtn.MouseButton1Click:Connect(function()
 	gui:Destroy()
 end)
 
--- Стартовое сообщение
-debugPrint("Скрипт загружен. Жми Farm", Color3.fromRGB(150,150,150))
+debugPrint("V3.2 – Универсальный поиск чаш", Color3.fromRGB(150,150,150))
