@@ -1,4 +1,9 @@
--- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V3.1) ]] --
+-- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V3.2) ]] --
+-- Изменения V3.2:
+--  * Игнор уже открытых боксов (после открытия — в PermanentBoxBlacklist, не сбрасывается)
+--  * При запуске фарма сохраняются ВСЕ предметы инвентаря как OriginalTools
+--  * При дропе OriginalTools НЕ трогаются (не перемещаются, не сбрасываются)
+--  * РАНДОМНЫЙ порядок перемещения тулов в Character (shuffle, один за другим)
 -- Изменения V3.1:
 --  * Сохраняется ПОЛНЫЙ CFrame (позиция + поворот) HumanoidRootPart
 --  * После возврата — проверка что мы на сохранённой позиции (дистанция < 0.5)
@@ -79,6 +84,12 @@ end
 -- Blacklist по Instance reference
 local Blacklist = setmetatable({}, { __mode = "k" })
 
+-- V3.2: Постоянный blacklist для уже открытых боксов (не сбрасывается кнопкой очистки)
+local PermanentBoxBlacklist = setmetatable({}, { __mode = "k" })
+
+-- V3.2: Предметы, которые были в инвентаре при запуске фарма (НЕ трогаем при дропе)
+local OriginalTools = setmetatable({}, { __mode = "k" })  -- ключи = Tool instances
+
 -- Очередь обнаруженных целей (заполняется каждые 5 сек, обрабатывается каждые 0.1 сек)
 local TargetsQueue = {}
 
@@ -90,8 +101,8 @@ ScreenGui.ResetOnSpawn = false
 
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 220, 0, 260)
-MainFrame.Position = UDim2.new(0.5, -110, 0.4, -130)
+MainFrame.Size = UDim2.new(0, 240, 0, 280)
+MainFrame.Position = UDim2.new(0.5, -120, 0.4, -140)
 MainFrame.BackgroundColor3 = Color3.fromRGB(20, 25, 35)
 MainFrame.BorderSizePixel = 2
 MainFrame.BorderColor3 = Color3.fromRGB(0, 230, 118)
@@ -105,7 +116,7 @@ Corner.Parent = MainFrame
 
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -28, 0, 28)
-TitleLabel.Text = "TMI V3.1 - CFrame Anchor+BS"
+TitleLabel.Text = "TMI V3.2 - SkipOrig+Shuffle"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.BackgroundColor3 = Color3.fromRGB(30, 35, 45)
 TitleLabel.Font = Enum.Font.GothamBold
@@ -181,7 +192,7 @@ ClearCorner.Parent = ClearBlacklistButton
 local DropModeLabel = Instance.new("TextLabel")
 DropModeLabel.Size = UDim2.new(0, 200, 0, 22)
 DropModeLabel.Position = UDim2.new(0.5, -100, 0, 150)
-DropModeLabel.Text = "Drop: CFrame Anchor + Backspace"
+DropModeLabel.Text = "Drop: Shuffle + Skip Original"
 DropModeLabel.TextColor3 = Color3.fromRGB(0, 230, 180)
 DropModeLabel.BackgroundTransparency = 1
 DropModeLabel.Font = Enum.Font.Gotham
@@ -234,7 +245,54 @@ local function isInsideOtherPlayer(tool)
 end
 
 -- =====================================================================
--- V3.1: НОВАЯ ФУНКЦИЯ ДРОПА С АНКОРОМ И BACKSPACE
+-- V3.2: СНЭПШОТ ИНВЕНТАРЯ ПРИ ЗАПУСКЕ ФАРМА
+-- Сохраняет все Tool которые уже есть у игрока (Backpack + Character).
+-- Эти предметы НИКОГДА не будут перемещены или сброшены при дропе.
+-- =====================================================================
+local function snapshotOriginalTools()
+    OriginalTools = setmetatable({}, { __mode = "k" })
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    local character = LocalPlayer.Character
+
+    local count = 0
+    -- Из Backpack
+    if backpack then
+        for _, tool in pairs(backpack:GetChildren()) do
+            if tool:IsA("Tool") then
+                OriginalTools[tool] = true
+                count = count + 1
+            end
+        end
+    end
+    -- Из Character (в руках)
+    if character then
+        for _, tool in pairs(character:GetChildren()) do
+            if tool:IsA("Tool") then
+                OriginalTools[tool] = true
+                count = count + 1
+            end
+        end
+    end
+
+    StatusLabel.Text = string.format("🔒 Запомнено %d ориг. предметов", count)
+    StatusLabel.TextColor3 = Color3.fromRGB(255, 200, 80)
+    return count
+end
+
+-- =====================================================================
+-- V3.2: SHUFFLE хелпер — перемешивает массив (Fisher-Yates)
+-- =====================================================================
+local function shuffleArray(tbl)
+    local n = #tbl
+    for i = n, 2, -1 do
+        local j = math.random(1, i)
+        tbl[i], tbl[j] = tbl[j], tbl[i]
+    end
+    return tbl
+end
+
+-- =====================================================================
+-- V3.2: НОВАЯ ФУНКЦИЯ ДРОПА С АНКОРОМ И BACKSPACE
 -- =====================================================================
 -- Порядок действий:
 --  1. Проверяем что мы на сохранённой позиции (дистанция < MAX_RETURN_DISTANCE)
@@ -282,27 +340,48 @@ local function dropInventoryAtSavedPosition(savedCFrame)
     -- Ещё раз фиксируем точный CFrame (позиция + поворот)
     hrp.CFrame = savedCFrame
 
-    -- === ШАГ 3: Перемещаем ВСЕ предметы из Backpack в Character ===
-    local toolsMoved = 0
+    -- === ШАГ 3: Перемещаем НОВЫЕ предметы из Backpack в Character ===
+    -- V3.2: Собираем Tool'ы, исключая OriginalTools, потом ШАФЛИМ порядок
+    local newTools = {}  -- список {tool} — только те, которых не было при старте
+    local skippedOriginals = 0
+
     for _, tool in pairs(backpack:GetChildren()) do
         if tool:IsA("Tool") then
+            if OriginalTools[tool] then
+                -- Этот предмет был у игрока до запуска фарма — НЕ ТРОГАЕМ
+                skippedOriginals = skippedOriginals + 1
+            else
+                table.insert(newTools, tool)
+            end
+        end
+    end
+
+    -- V3.2: РАНДОМНЫЙ порядок перемещения (Fisher-Yates shuffle)
+    shuffleArray(newTools)
+
+    local toolsMoved = 0
+    for _, tool in ipairs(newTools) do
+        if tool.Parent then  -- ещё не перемещён?
             pcall(function()
                 tool.Parent = character
                 toolsMoved = toolsMoved + 1
             end)
+            task.wait(0.02)  -- микро-пауза между перемещениями
         end
     end
 
-    -- Также собираем HopperBin'ы если есть
+    -- HopperBin'ы: тоже исключаем оригинальные
     for _, bin in pairs(backpack:GetChildren()) do
         if bin:IsA("HopperBin") then
-            pcall(function()
-                bin.Parent = character
-            end)
+            if not OriginalTools[bin] then
+                pcall(function()
+                    bin.Parent = character
+                end)
+            end
         end
     end
 
-    StatusLabel.Text = string.format("📦 %d предметов → Character", toolsMoved)
+    StatusLabel.Text = string.format("📦 %d новых → Char (пропущено %d ориг.)", toolsMoved, skippedOriginals)
     StatusLabel.TextColor3 = Color3.fromRGB(180, 230, 255)
 
     -- === ШАГ 4: ЖОСКИЙ BACKSPACE ===
@@ -408,7 +487,8 @@ local function scanWorkspace()
                     Blacklist[obj] = true
                     continue
                 end
-                if Blacklist[obj] then continue end
+                -- V3.2: проверяем оба блеклиста
+                if Blacklist[obj] or PermanentBoxBlacklist[obj] then continue end
 
                 local prompt = nil
                 for _, descendant in pairs(obj:GetDescendants()) do
@@ -419,7 +499,11 @@ local function scanWorkspace()
                 end
 
                 if prompt then
-                    if isShopPrompt(prompt) then Blacklist[obj] = true; continue end
+                    if isShopPrompt(prompt) then
+                        Blacklist[obj] = true
+                        PermanentBoxBlacklist[obj] = true
+                        continue
+                    end
 
                     local targetPos = nil
                     if obj:IsA("Model") and obj.PrimaryPart then
@@ -655,9 +739,10 @@ local function processQueue()
                 StatusLabel.TextColor3 = Color3.fromRGB(220, 200, 100)
             end
             Blacklist[target.obj] = true
+            PermanentBoxBlacklist[target.obj] = true  -- V3.2: навсегда игнорим этот бокс
 
             -- =========================================================
-            -- V3.1: ДРОП ЧЕРЕЗ АНКОР + BACKSPACE (только на сохр. позиции)
+            -- V3.2: ДРОП ЧЕРЕЗ АНКОР + BACKSPACE (только на сохр. позиции)
             -- =========================================================
             task.wait(0.1)
             local dropped = dropInventoryAtSavedPosition(originalCFrame)
@@ -671,7 +756,7 @@ local function processQueue()
     processingBusy = false
 
     if not ok then
-        warn("[TMI V3.1] processQueue error: " .. tostring(err))
+        warn("[TMI V3.2] processQueue error: " .. tostring(err))
         -- На случай ошибки: снимаем анкор с HRP
         pcall(function()
             local char = LocalPlayer.Character
@@ -770,12 +855,16 @@ ToggleButton.MouseButton1Click:Connect(function()
     if _G.CupBoxFarmActive then
         ToggleButton.Text = "Farm: ON"
         ToggleButton.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
-        StatusLabel.Text = "Farm Enabled. Скан каждые 5с, подбор каждые 0.1с"
+
+        -- V3.2: Сохраняем снэпшот инвентаря (эти предметы трогать нельзя)
+        local origCount = snapshotOriginalTools()
+        StatusLabel.Text = string.format("Farm ON. 🔒%d ориг. предметов защищено", origCount)
         StatusLabel.TextColor3 = Color3.fromRGB(0, 230, 118)
     else
         ToggleButton.Text = "Farm: OFF"
         ToggleButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
         TargetsQueue = {}
+        -- V3.2: при выключении НЕ сбрасываем OriginalTools — они нужны если снова включим
         StatusLabel.Text = "Farm Disabled"
         StatusLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
     end
@@ -786,7 +875,8 @@ FreeCamButton.MouseButton1Click:Connect(toggleFreeCam)
 ClearBlacklistButton.MouseButton1Click:Connect(function()
     Blacklist = setmetatable({}, { __mode = "k" })
     TargetsQueue = {}
-    StatusLabel.Text = "Blacklist очищен!"
+    -- V3.2: PermanentBoxBlacklist НЕ очищается — уже открытые боксы навсегда игнорим
+    StatusLabel.Text = "Blacklist очищен (откр. боксы — навсегда)"
     StatusLabel.TextColor3 = Color3.fromRGB(255, 200, 80)
 end)
 
@@ -804,9 +894,11 @@ local function destroyScript()
         pcall(stopFreeCam)
     end
 
-    -- 3. Чистим очередь и blacklist
+    -- 3. Чистим очередь и blacklist'ы
     TargetsQueue = {}
     Blacklist = setmetatable({}, { __mode = "k" })
+    PermanentBoxBlacklist = setmetatable({}, { __mode = "k" })
+    OriginalTools = setmetatable({}, { __mode = "k" })
 
     -- 4. Отключаем коннекшены клавиатуры
     if fInputConn then
