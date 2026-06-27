@@ -1,17 +1,17 @@
--- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V3.5) ]] --
+-- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V3.6) ]] --
+-- Изменения V3.6:
+--  * Бесконечный спам Backspace только когда персонаж на изначальной позиции
+--  * Сохраняется farmHomeCFrame при старте фарма
+--  * Дроп происходит лишь если (HRP.Position - farmHomeCFrame.Position).Magnitude < 10
+--  * Ускорен цикл дропа до 0.2 сек (быстрый перебор OriginalTools)
+--  * Новые собранные предметы не выбрасываются
 -- Изменения V3.5:
 --  * При старте фарма запоминаются ВСЕ предметы в инвентаре (OriginalTools)
 --  * Каждые 0.5с, если очередь целей пуста, выбрасывается случайный предмет из OriginalTools
 --  * Выброс через Backspace (VirtualInputManager)
 --  * Выброшенные предметы добавляются в Blacklist – скрипт их больше не подбирает
 --  * Новые собранные чаши/слитки не попадают в OriginalTools → не выбрасываются
--- Изменения V3.4:
---  * Холостой дроп через Backspace (было)
--- Изменения V3.3:
---  * УБРАН дроп предметов (не выбрасываем собранное)
---  * УБРАНО закрепление HRP (нет Anchored = true)
---  * Только: сохранили CFrame → телепорт → подбор/активация → возврат CFrame
--- ... (остальные изменения без изменений)
+-- ... (предыдущие изменения сохранены)
 
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
@@ -26,7 +26,8 @@ _G.ScriptAlive = true
 -- ===== НАСТРОЙКИ ТАЙМИНГОВ =====
 local SCAN_INTERVAL = 5      -- Сканирование Workspace каждые 5 сек
 local PICKUP_INTERVAL = 0.1  -- Подбор найденных предметов каждые 0.1 сек
-local DROP_INTERVAL = 0.5    -- Проверка и выброс из OriginalTools каждые 0.5 сек
+local DROP_INTERVAL = 0.2    -- Проверка дропа оригинальных предметов каждые 0.2 сек (быстрый спам)
+local HOME_RADIUS = 10       -- Радиус от сохранённой точки, в котором разрешён дроп
 
 -- Ключевые слова для поиска инструментов (case-insensitive)
 local TOOL_KEYWORDS = { "cup", "genesis", "gold", "silver", "copper" }
@@ -47,6 +48,8 @@ local PermanentBoxBlacklist = setmetatable({}, { __mode = "k" })
 
 -- V3.5: Список предметов, которые были в инвентаре при старте фарма
 local OriginalTools = {}
+-- V3.6: Сохранённая позиция старта фарма
+local farmHomeCFrame = nil
 
 -- Очередь обнаруженных целей
 local TargetsQueue = {}
@@ -74,7 +77,7 @@ Corner.Parent = MainFrame
 
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -28, 0, 28)
-TitleLabel.Text = "TMI V3.5 - Original Drop"
+TitleLabel.Text = "TMI V3.6 - Home Backspace Spam"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.BackgroundColor3 = Color3.fromRGB(30, 35, 45)
 TitleLabel.Font = Enum.Font.GothamBold
@@ -423,15 +426,20 @@ local function processQueue()
     end)
 
     processingBusy = false
-    if not ok then warn("[TMI V3.5] processQueue error: " .. tostring(err)) end
+    if not ok then warn("[TMI V3.6] processQueue error: " .. tostring(err)) end
 end
 
--- ===== V3.5: ХОЛОСТОЙ ДРОП ТОЛЬКО ОРИГИНАЛЬНЫХ ПРЕДМЕТОВ =====
+-- ===== V3.6: БЕСКОНЕЧНЫЙ ДРОП ОРИГИНАЛЬНЫХ ПРЕДМЕТОВ ТОЛЬКО НА ДОМАШНЕЙ ПОЗИЦИИ =====
 local function dropOriginalItem()
     local character = LocalPlayer.Character
     if not character then return end
+    local hrp = character:FindFirstChild("HumanoidRootPart")
     local humanoid = character:FindFirstChildOfClass("Humanoid")
-    if not humanoid then return end
+    if not hrp or not humanoid then return end
+
+    -- Проверяем, что мы на сохранённой позиции (в радиусе HOME_RADIUS)
+    if not farmHomeCFrame then return end
+    if (hrp.Position - farmHomeCFrame.Position).Magnitude > HOME_RADIUS then return end
 
     -- Ищем OriginalTools, которые ещё в инвентаре и не в Blacklist
     local candidates = {}
@@ -441,36 +449,43 @@ local function dropOriginalItem()
         end
     end
 
-    if #candidates == 0 then return end
+    if #candidates == 0 then
+        StatusLabel.Text = "Все оригиналы выброшены"
+        StatusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+        return
+    end
 
-    local tool = candidates[math.random(#candidates)]
+    local tool = candidates[1]  -- Берём первый, чтобы не дёргать random (быстрее)
     local handle = tool:FindFirstChild("Handle") or tool:FindFirstChildWhichIsA("BasePart")
     if not handle then return end
 
     -- Экипируем, если не в руках
     if not tool:IsDescendantOf(character) then
         pcall(function() humanoid:EquipTool(tool) end)
-        task.wait(0.1)
+        task.wait(0.05)
     end
 
-    -- Эмулируем нажатие Backspace
+    -- Бесконечно шлём Backspace
     VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Backspace, false, nil)
-    task.wait(0.05)
+    task.wait(0.02)
     VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Backspace, false, nil)
-    task.wait(0.15)
+    task.wait(0.08)  -- Немного ждём, чтобы игра обработала
 
     -- Если предмет выброшен (в workspace), игнорируем его
     if tool.Parent == workspace then
-        Blacklist[tool] = true  -- чтобы не подбирать обратно
-        -- Удаляем из OriginalTools, чтобы не пытаться выбросить снова
+        Blacklist[tool] = true
+        -- Удаляем из OriginalTools
         for i, t in ipairs(OriginalTools) do
             if t == tool then
                 table.remove(OriginalTools, i)
                 break
             end
         end
-        StatusLabel.Text = "Выбросил: " .. tool.Name
+        StatusLabel.Text = "Дропнул: " .. tool.Name
         StatusLabel.TextColor3 = Color3.fromRGB(255, 200, 80)
+    else
+        -- Если не выбросился, ждём ещё
+        task.wait(0.1)
     end
 end
 
@@ -545,9 +560,14 @@ end
 ToggleButton.MouseButton1Click:Connect(function()
     _G.CupBoxFarmActive = not _G.CupBoxFarmActive
     if _G.CupBoxFarmActive then
-        -- V3.5: Сохраняем ВСЕ предметы в инвентаре как OriginalTools
-        OriginalTools = {}
+        -- Сохраняем позицию старта (дом)
         local character = LocalPlayer.Character
+        if character and character:FindFirstChild("HumanoidRootPart") then
+            farmHomeCFrame = character.HumanoidRootPart.CFrame
+        end
+
+        -- Сохраняем ВСЕ предметы в инвентаре как OriginalTools
+        OriginalTools = {}
         local backpack = LocalPlayer:FindFirstChild("Backpack")
         if backpack then
             for _, obj in pairs(backpack:GetChildren()) do
@@ -573,6 +593,7 @@ ToggleButton.MouseButton1Click:Connect(function()
         ToggleButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
         TargetsQueue = {}
         OriginalTools = {}
+        farmHomeCFrame = nil
         StatusLabel.Text = "Farm Disabled"
         StatusLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
     end
@@ -583,7 +604,6 @@ FreeCamButton.MouseButton1Click:Connect(toggleFreeCam)
 ClearBlacklistButton.MouseButton1Click:Connect(function()
     Blacklist = setmetatable({}, { __mode = "k" })
     TargetsQueue = {}
-    -- PermanentBoxBlacklist НЕ очищается
     StatusLabel.Text = "Blacklist очищен (откр. боксы — навсегда)"
     StatusLabel.TextColor3 = Color3.fromRGB(255, 200, 80)
 end)
@@ -599,6 +619,7 @@ local function destroyScript()
     Blacklist = setmetatable({}, { __mode = "k" })
     PermanentBoxBlacklist = setmetatable({}, { __mode = "k" })
     OriginalTools = {}
+    farmHomeCFrame = nil
     if fInputConn then fInputConn:Disconnect() fInputConn = nil end
     pcall(function()
         UIS.MouseBehavior = Enum.MouseBehavior.Default
@@ -637,7 +658,7 @@ task.spawn(function()
     end
 end)
 
--- ===== ЦИКЛ ХОЛОСТОГО ДРОПА ОРИГИНАЛЬНЫХ ПРЕДМЕТОВ (0.5 сек) =====
+-- ===== ЦИКЛ БЕСКОНЕЧНОГО ДРОПА (0.2 сек) ТОЛЬКО ДОМА =====
 task.spawn(function()
     while _G.ScriptAlive do
         if _G.CupBoxFarmActive and #TargetsQueue == 0 and not processingBusy then
