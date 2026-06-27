@@ -1,46 +1,13 @@
--- [[ TMI V3.1 — CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM ]] --
+-- [[ TMI V3.2 — CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM ]] --
+-- Изменения V3.2 (по запросу):
+--  * При нажатии Backspace (эмуляции сброса) ВСЕ предметы принудительно переносятся
+--    в Character локального игрока (чтобы они экипировались/оказались в руках),
+--    после чего спамится клавиша Backspace для их полного выбрасывания на землю.
+--
 -- Изменения V3.1:
 --  * При старте фарма: HRP закрепляется (Anchored), запоминается CFrame
 --  * После подбора: все Tool → Character, затем h:UnequipTools()
 --  * Спам Backspace ТОЛЬКО если игрок на сохранённой позиции
---
--- Изменения V3.0:
---  * Игнор боксов с "supply" в имени (Supply Box и т.п.) — в blacklist автоматически
---  * После возврата к исходной точке — DROP всех собранных тулов на землю
---    (humanoid:UnequipTools() + перенос всех Tool из Backpack в Character)
--- Изменения V2.9:
---  * НАСТОЯЩЕЕ удержание через prompt:InputHoldBegin() / :InputHoldEnd()
---    (эмулирует реальное зажатие клавиши игроком — самый надёжный способ)
---  * Параллельно спамим fireproximityprompt как fallback
---  * Отключаем RequiresLineOfSight на время удержания
---  * Финальный fire после InputHoldEnd для надёжности
--- Изменения V2.8:
---  * БОКСЫ В ПРИОРИТЕТЕ: всегда обрабатываются раньше тулз
---  * Удержание полное HoldDuration + 0.5с
---  * Анкор + ежекадровая фиксация CFrame
---  * Временное увеличение MaxActivationDistance
--- Изменения V2.7:
---  * Боксы активируются полностью (но через Triggered — не всегда срабатывало)
---  * Тело анкорится во время удержания
---  * Флаг processingBusy блокирует параллельные цели
--- Изменения V2.6:
---  * Добавлена кнопка ✕ (Close) — полностью удаляет скрипт, чистит все ресурсы
---  * Игнорирует предметы внутри ДРУГИХ ИГРОКОВ (тулы в руках/рюкзаке других Character)
--- Изменения V2.5:
---  * Переработаны тайминги: сканирование каждые 5 сек, подбор каждые 0.1 сек
---  * Добавлен упрощённый FreeCam (без плавностей, без скрытия GUI)
---  * FreeCam: WASD движение, Space - вверх, Q - вниз, Shift - медленно
---  * Камера от 1 лица с центром привязанным к курсору
---  * Выход из FreeCam: клавиша F или повторное нажатие кнопки (для тач-устройств)
--- Изменения V2.4:
---  * Бокс может быть Model или BasePart (раньше только BasePart)
---  * ProximityPrompt ищется РЕКУРСИВНО внутри бокса (box.Main.ProximityPrompt и т.п.)
--- Изменения V2.3:
---  * Добавлены ключевые слова "gold", "silver", "copper"
--- Изменения V2.2:
---  * Добавлено ключевое слово "genesis"
--- Изменения V2.1:
---  * Blacklist по Instance ID, игнор Anchored, игнор "$"-Prompts
 
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
@@ -101,7 +68,7 @@ Corner.Parent = MainFrame
 
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -28, 0, 28)
-TitleLabel.Text = "TMI V3.1 - Anchor + Backspace"
+TitleLabel.Text = "TMI V3.2 - Auto Backpack Transfer"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.BackgroundColor3 = Color3.fromRGB(30, 35, 45)
 TitleLabel.Font = Enum.Font.GothamBold
@@ -210,7 +177,7 @@ StatusLabel.TextYAlignment = Enum.TextYAlignment.Top
 StatusLabel.Parent = MainFrame
 
 -- =====================================================================
--- ===== V3.1: НОВЫЕ ФУНКЦИИ: ANCHOR HRP + ЗАПОМИНАНИЕ ПОЗИЦИИ =====
+-- ===== V3.1: ФУНКЦИИ: ANCHOR HRP + ЗАПОМИНАНИЕ ПОЗИЦИИ =====
 -- =====================================================================
 
 local function saveAndAnchorHRP()
@@ -219,16 +186,10 @@ local function saveAndAnchorHRP()
     local hrp = character:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
 
-    -- Запоминаем CFrame (позиция + поворот)
     SavedCFrame = hrp.CFrame
-
-    -- Запоминаем был ли уже заанкорен, чтобы потом восстановить
     WasHRPAnchored = hrp.Anchored
-
-    -- Закрепляем
     hrp.Anchored = true
 
-    -- Обновляем GUI
     local x = math.floor(SavedCFrame.Position.X * 10) / 10
     local y = math.floor(SavedCFrame.Position.Y * 10) / 10
     local z = math.floor(SavedCFrame.Position.Z * 10) / 10
@@ -240,20 +201,18 @@ local function saveAndAnchorHRP()
     SavedPosLabel.Text = string.format("📍 X=%.1f Y=%.1f Z=%.1f Rot=%d°", x, y, z, deg)
     SavedPosLabel.TextColor3 = Color3.fromRGB(130, 210, 255)
 
-    print("[TMI V3.1] HRP заанкорен на позиции: " .. tostring(SavedCFrame.Position))
+    print("[TMI V3.2] HRP заанкорен на позиции: " .. tostring(SavedCFrame.Position))
     return true
 end
 
 local function releaseHRP()
     if not WasHRPAnchored then
-        -- Если HRP не был заанкорен до нас — просто снимаем
         local character = LocalPlayer.Character
         if character then
             local hrp = character:FindFirstChild("HumanoidRootPart")
             if hrp then hrp.Anchored = false end
         end
     end
-    -- Если был заанкорен изначально — оставляем как есть
 
     AnchorStatus.Text = "🔓 HRP: свободен"
     AnchorStatus.TextColor3 = Color3.fromRGB(150, 150, 150)
@@ -261,12 +220,8 @@ local function releaseHRP()
     SavedPosLabel.TextColor3 = Color3.fromRGB(100, 150, 220)
     SavedCFrame = nil
     WasHRPAnchored = false
-    print("[TMI V3.1] HRP разанкорен")
+    print("[TMI V3.2] HRP разанкорен")
 end
-
--- =====================================================================
--- ===== V3.1: ПРОВЕРКА НА СОХРАНЁННОЙ ЛИ ПОЗИЦИИ ИГРОК =====
--- =====================================================================
 
 local function isAtSavedPosition()
     if not SavedCFrame then return false end
@@ -276,11 +231,11 @@ local function isAtSavedPosition()
     if not hrp then return false end
 
     local dist = (hrp.Position - SavedCFrame.Position).Magnitude
-    return dist < 3  -- допуск 3 студа
+    return dist < 3
 end
 
 -- =====================================================================
--- ===== V3.1: ПЕРЕНОС ТУЛ В CHARACTER + BACKSPACE SPAM =====
+-- ===== V3.2: ФУНКЦИЯ ПЕРЕНОСА И ВЫБРАСЫВАНИЯ ЧЕРЕЗ BACKSPACE =====
 -- =====================================================================
 
 local function moveToolsToCharacterAndSpamBackspace()
@@ -290,45 +245,59 @@ local function moveToolsToCharacterAndSpamBackspace()
     local backpack = LocalPlayer:FindFirstChild("Backpack")
     if not humanoid or not backpack then return end
 
-    local toolCount = 0
-
-    -- 1. Переносим все Tool из Backpack в Character
-    for _, tool in pairs(backpack:GetChildren()) do
-        if tool:IsA("Tool") then
-            pcall(function()
-                tool.Parent = character
-                toolCount = toolCount + 1
-            end)
-        end
-    end
-
-    -- 2. Сбрасываем экипированные тулы (вызовет .Dropped для тех, что в руках)
-    pcall(function() humanoid:UnequipTools() end)
-
-    if toolCount > 0 then
-        print("[TMI V3.1] Перемещено " .. tostring(toolCount) .. " тулз в Character")
-    end
-
-    -- 3. Backspace spam (ТОЛЬКО если игрок на сохранённой позиции)
+    -- Проверяем, на сохранённой ли мы позиции (только там спамим сброс)
     if isAtSavedPosition() then
-        local spamCount = 3 + math.random(0, 5)
-        print("[TMI V3.1] Спам Backspace ×" .. tostring(spamCount) .. " на сохранённой позиции")
+        -- Начинаем цикл сброса всех предметов
+        local totalTools = #backpack:GetChildren()
+        if totalTools == 0 then
+            -- Проверим, есть ли что-то в Character
+            local toolInHand = character:FindFirstChildWhichIsA("Tool")
+            if not toolInHand then
+                print("[TMI V3.2] Рюкзак и руки пусты, сбрасывать нечего")
+                return
+            end
+        end
 
-        for i = 1, spamCount do
+        print("[TMI V3.2] Начинаю перенос и сброс предметов... Всего в Backpack: " .. tostring(totalTools))
+
+        -- 1. Будем переносить предметы по одному и сразу спамить Backspace,
+        --    либо перенесём все и заспамим Backspace. Самый надёжный способ в Roblox:
+        --    переместить каждый предмет в Character (в руку) и прожать Backspace.
+        for _, tool in pairs(backpack:GetChildren()) do
+            if tool:IsA("Tool") then
+                pcall(function()
+                    -- Перемещаем инструмент в Character локального игрока (экипируем)
+                    tool.Parent = character
+                    task.wait(0.05) -- ждём экипировки
+
+                    -- Эмулируем нажатие клавиши Backspace для выбрасывания
+                    UIS:SendKeyEvent(true, Enum.KeyCode.Backspace, false, game)
+                    task.wait(0.04)
+                    UIS:SendKeyEvent(false, Enum.KeyCode.Backspace, false, game)
+                    task.wait(0.05)
+                end)
+            end
+        end
+
+        -- 2. Финальный спам Backspace для очистки рук
+        for i = 1, 5 do
             pcall(function()
-                -- Эмулируем нажатие и отпускание клавиши Backspace
-                -- Метод 1: SendKeyEvent (поддерживается многими эксплоитами)
+                -- Переносим любые остатки если появились
+                for _, t in pairs(backpack:GetChildren()) do
+                    if t:IsA("Tool") then t.Parent = character end
+                end
+                
                 UIS:SendKeyEvent(true, Enum.KeyCode.Backspace, false, game)
-                task.wait(0.04 + math.random() * 0.03)
+                task.wait(0.03)
                 UIS:SendKeyEvent(false, Enum.KeyCode.Backspace, false, game)
-                task.wait(0.03 + math.random() * 0.02)
+                task.wait(0.03)
             end)
         end
 
-        StatusLabel.Text = string.format("⌨️ Backspace ×%d (на позиции)", spamCount)
+        StatusLabel.Text = "📤 Все предметы перенесены в Character и выброшены!"
         StatusLabel.TextColor3 = Color3.fromRGB(255, 138, 101)
     else
-        print("[TMI V3.1] Пропущен Backspace: не на сохранённой позиции")
+        print("[TMI V3.2] Пропущен Backspace: не на сохранённой позиции")
         StatusLabel.Text = "⛔ Backspace пропущен (не на позиции)"
         StatusLabel.TextColor3 = Color3.fromRGB(255, 150, 100)
     end
@@ -511,7 +480,7 @@ local function processQueue()
             task.wait(0.03)
             hrp.CFrame = originalCFrame
 
-            -- V3.1: Перенос тул в Character + Backspace spam
+            -- V3.2: Перенос тул в Character + Backspace spam
             task.wait(0.05)
             moveToolsToCharacterAndSpamBackspace()
 
@@ -599,7 +568,7 @@ local function processQueue()
             end
             Blacklist[target.obj] = true
 
-            -- V3.1: Перенос тул в Character + Backspace spam
+            -- V3.2: Перенос тул в Character + Backspace spam
             task.wait(0.1)
             moveToolsToCharacterAndSpamBackspace()
         end
@@ -608,7 +577,7 @@ local function processQueue()
     processingBusy = false
 
     if not ok then
-        warn("[TMI V3.1] processQueue error: " .. tostring(err))
+        warn("[TMI V3.2] processQueue error: " .. tostring(err))
     end
 end
 
@@ -695,7 +664,6 @@ ToggleButton.MouseButton1Click:Connect(function()
         StatusLabel.Text = "Farm Enabled. Скан каждые 5с, подбор каждые 0.1с"
         StatusLabel.TextColor3 = Color3.fromRGB(0, 230, 118)
 
-        -- V3.1: Закрепляем HRP и запоминаем позицию при старте фарма
         saveAndAnchorHRP()
     else
         ToggleButton.Text = "Farm: OFF"
@@ -704,7 +672,6 @@ ToggleButton.MouseButton1Click:Connect(function()
         StatusLabel.Text = "Farm Disabled"
         StatusLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
 
-        -- V3.1: Отпускаем HRP при выключении фарма
         releaseHRP()
     end
 end)
@@ -750,7 +717,6 @@ local function destroyScript()
         end
     end)
 
-    -- V3.1: Снимаем анкор при закрытии
     releaseHRP()
 
     pcall(function() ScreenGui:Destroy() end)
