@@ -1,4 +1,4 @@
--- LocalScript (Client11111111111111)
+-- LocalScript (Client)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -6,7 +6,7 @@ local rootPart = character:WaitForChild("HumanoidRootPart")
 
 -- Состояния
 local isFarming = false
-local returnPosition = nil
+local homeCFrame = nil               -- домашний CFrame (позиция + поворот)
 local currentHighlights = {}
 local farmCoroutine = nil
 local stopRequested = false
@@ -129,7 +129,7 @@ local function isPromptValid(prompt)
     return getParentObject(prompt) ~= nil
 end
 
--- Активация промпта с боковым смещением
+-- Активация промпта с боковым смещением и возвратом в homeCFrame
 local function activatePrompt(prompt)
     if not isPromptValid(prompt) then return false end
 
@@ -150,6 +150,11 @@ local function activatePrompt(prompt)
     local holdTime = prompt.HoldDuration + 0.1
     task.wait(holdTime)
     prompt:InputHoldEnd()
+
+    -- Возвращаемся строго на домашнюю точку
+    if homeCFrame then
+        rootPart.CFrame = homeCFrame
+    end
     return true
 end
 
@@ -220,12 +225,8 @@ local function farmCycle()
 
             for _, prompt in ipairs(sortedPrompts) do
                 if not isFarming or stopRequested then break end
-                -- Проверяем, не пропал ли предмет перед активацией
                 if isPromptValid(prompt) then
-                    activatePrompt(prompt)
-                end
-                if returnPosition and rootPart then
-                    rootPart.CFrame = CFrame.new(returnPosition)
+                    activatePrompt(prompt)   -- внутри возврат на homeCFrame
                 end
                 task.wait(0.1)
             end
@@ -237,12 +238,12 @@ local function farmCycle()
             rootPart.Anchored = true
         end
 
-        -- Пауза между проходами (прерывается при запросе перезапуска)
+        -- Пауза между проходами
         local waited = 0
         while waited < 5 and isFarming and not stopRequested do
             if restartRequested then
                 restartRequested = false
-                break  -- выходим из паузы, начнём новый цикл сканирования
+                break
             end
             task.wait(0.5)
             waited = waited + 0.5
@@ -339,6 +340,9 @@ closeCorner.Parent = closeButton
 -- ====== ОБРАБОТЧИКИ ======
 toggleButton.MouseButton1Click:Connect(function()
     if not isFarming then
+        -- Запоминаем домашний CFrame
+        homeCFrame = rootPart.CFrame
+
         -- Запоминаем исходное состояние всех промптов
         local initialPrompts = getAllPrompts()
         originalEnabledStates = {}
@@ -351,9 +355,8 @@ toggleButton.MouseButton1Click:Connect(function()
         restartRequested = false
         toggleButton.Text = "⏹ Остановить"
         toggleButton.BackgroundColor3 = Color3.new(0.6, 0.2, 0.2)
-        returnPosition = rootPart.Position
 
-        startRestartTimer()  -- запускаем таймер авторестарта
+        startRestartTimer()
 
         if farmCoroutine then coroutine.close(farmCoroutine) end
         farmCoroutine = coroutine.create(farmCycle)
