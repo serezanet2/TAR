@@ -1,4 +1,4 @@
--- LocalScript (Cli234234ent)
+-- LocalScript (Cli234324234ent)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -39,10 +39,29 @@ local function getParentObject(prompt)
     return parent
 end
 
-local function createHighlight(obj)
+-- Проверка, нужно ли пропустить предмет (Blood Garlic, Oil)
+local function shouldSkipItem(prompt)
+    local obj = getParentObject(prompt)
+    if not obj then return false end
+    local lowerName = obj.Name:lower()
+    if lowerName:find("blood garlic") or lowerName:find("oil") then
+        return true
+    end
+    return false
+end
+
+-- Проверка, является ли предмет ящиком (box)
+local function isBox(prompt)
+    local obj = getParentObject(prompt)
+    if not obj then return false end
+    return obj.Name:lower():find("box") ~= nil
+end
+
+local function createHighlight(obj, useRedOutline)
     if not obj then return nil end
     for _, child in ipairs(obj:GetChildren()) do
         if child:IsA("Highlight") and child.Name == "FarmHighlight" then
+            child.OutlineColor = useRedOutline and Color3.new(1, 0, 0) or Color3.new(0, 1, 0)
             return child
         end
     end
@@ -50,7 +69,7 @@ local function createHighlight(obj)
     highlight.Name = "FarmHighlight"
     highlight.FillColor = Color3.new(0, 0, 0)
     highlight.FillTransparency = 0.5
-    highlight.OutlineColor = Color3.new(0, 1, 0)
+    highlight.OutlineColor = useRedOutline and Color3.new(1, 0, 0) or Color3.new(0, 1, 0)
     highlight.OutlineTransparency = 0
     highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
     highlight.Parent = obj
@@ -108,13 +127,23 @@ local function farmCycle()
     while isFarming and not stopRequested do
         rootPart.Anchored = false
 
-        local prompts = getAllPrompts()
+        local allPrompts = getAllPrompts()
+        -- Фильтрация: убираем Blood Garlic и Oil
+        local prompts = {}
+        for _, prompt in ipairs(allPrompts) do
+            if not shouldSkipItem(prompt) then
+                table.insert(prompts, prompt)
+            end
+        end
+
         if #prompts > 0 then
             clearHighlights()
+            -- Подсветка: красный для ящиков, зелёный для остальных
             for _, prompt in ipairs(prompts) do
                 local obj = getParentObject(prompt)
                 if obj then
-                    local hl = createHighlight(obj)
+                    local useRed = isBox(prompt)
+                    local hl = createHighlight(obj, useRed)
                     if hl then table.insert(currentHighlights, hl) end
                 end
             end
@@ -130,7 +159,7 @@ local function farmCycle()
 
             clearHighlights()
             task.wait(0.2)
-            rootPart.Anchored = true   -- закрепляем на время ожидания между сессиями
+            rootPart.Anchored = true
         else
             rootPart.Anchored = true
         end
@@ -142,9 +171,9 @@ local function farmCycle()
         end
     end
 
-    -- Когда цикл завершается (например, при остановке) — делаем персонажа свободным
+    -- Завершение: убираем подсветку и освобождаем персонажа
     clearHighlights()
-    rootPart.Anchored = false   -- <--- теперь false, чтобы можно было ходить
+    rootPart.Anchored = false
 end
 
 -- ====== СОЗДАНИЕ GUI ======
@@ -230,17 +259,16 @@ toggleButton.MouseButton1Click:Connect(function()
         farmCoroutine = coroutine.create(farmCycle)
         coroutine.resume(farmCoroutine)
     else
-        -- Выключение – персонаж остаётся НЕзакреплённым
+        -- Выключение – персонаж полностью свободен
         isFarming = false
         stopRequested = true
 
-        -- Убираем Highlight
         clearHighlights()
 
-        -- Делаем rootPart свободным (false)
-        rootPart.Anchored = false   -- <--- теперь false
+        if rootPart then
+            rootPart.Anchored = false
+        end
 
-        -- Принудительно завершаем корутину
         if farmCoroutine then
             coroutine.close(farmCoroutine)
             farmCoroutine = nil
@@ -256,7 +284,7 @@ closeButton.MouseButton1Click:Connect(function()
     stopRequested = true
     clearHighlights()
     if rootPart then
-        rootPart.Anchored = false   -- <--- теперь false
+        rootPart.Anchored = false
     end
     if farmCoroutine then
         coroutine.close(farmCoroutine)
