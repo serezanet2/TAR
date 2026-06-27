@@ -1,10 +1,11 @@
 --[[
-	Auto Cup & Box Farm V2
+	Auto Cup & Box Farm V2.1
 	Основан на лучших механиках TMI V3.3 (InputHoldBegin, игнор supply/$/других игроков, постоянный blacklist).
-	Полностью переписан для стабильности:
 	- Сохраняет CFrame игрока, после обработки ВСЕХ целей возвращает обратно.
 	- Сканирование каждые 5 сек, подбор каждые 0.1 сек.
 	- Боксы в приоритете, настоящий hold + расширение дистанции.
+	- НОВОЕ: автоматическое закрепление (Anchored) после возврата на исходную позицию.
+	  Перед телепортом к цели закрепление снимается, после возврата — включается.
 --]]
 
 local Players = game:GetService("Players")
@@ -176,6 +177,11 @@ local function processOneTarget()
 
 	busy = true
 
+	-- Снимаем закрепление перед телепортом
+	if hrp.Anchored then
+		hrp.Anchored = false
+	end
+
 	-- Сохраняем исходный CFrame ДО любых действий
 	local originalCFrame = hrp.CFrame
 
@@ -200,9 +206,6 @@ local function processOneTarget()
 			-- Подбор
 			pcall(function() humanoid:EquipTool(target.obj) end)
 			task.wait(0.03)
-
-			-- Возврат
-			hrp.CFrame = originalCFrame
 
 		elseif target.type == "box" then
 			local prompt = target.prompt
@@ -254,12 +257,20 @@ local function processOneTarget()
 				if origLineOfSight ~= nil then prompt.RequiresLineOfSight = origLineOfSight end
 			end)
 
-			-- Возврат игрока
-			hrp.CFrame = originalCFrame
-
 			-- Помечаем бокс как обработанный НАВСЕГДА
 			Blacklist[target.obj] = true
 			PermanentBlacklist[target.obj] = true
+		end
+	end)
+
+	-- Возврат на исходную позицию (даже если была ошибка)
+	pcall(function()
+		if hrp and hrp.Parent then
+			hrp.CFrame = originalCFrame
+			-- ЗАКРЕПЛЯЕМ HRP, если фарм ещё активен
+			if farmActive then
+				hrp.Anchored = true
+			end
 		end
 	end)
 
@@ -319,7 +330,7 @@ local titleLabel = Instance.new("TextLabel")
 titleLabel.Size = UDim2.new(0, 120, 0, 30)
 titleLabel.Position = UDim2.new(0, 5, 0, 0)
 titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "Cup & Box Farm V2"
+titleLabel.Text = "Cup & Box Farm V2.1"
 titleLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
 titleLabel.Font = Enum.Font.GothamBold
 titleLabel.TextSize = 14
@@ -399,6 +410,12 @@ farmBtn.MouseButton1Click:Connect(function()
 		farmBtn.Text = "Auto Farm (OFF)"
 		farmBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
 		targetsQueue = {}
+		-- Снимаем закрепление при выключении
+		local char = LocalPlayer.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if hrp then
+			hrp.Anchored = false
+		end
 	end
 end)
 
@@ -409,5 +426,11 @@ closeBtn.MouseButton1Click:Connect(function()
 	targetsQueue = {}
 	Blacklist = setmetatable({}, { __mode = "k" })
 	PermanentBlacklist = setmetatable({}, { __mode = "k" })
+	-- Убираем закрепление
+	local char = LocalPlayer.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if hrp then
+		hrp.Anchored = false
+	end
 	gui:Destroy()
 end)
