@@ -1,4 +1,4 @@
--- LocalScript (Client)
+-- LocalScript (Cli6767676767676767676ent)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -13,21 +13,33 @@ local stopRequested = false
 
 -- ====== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ======
 
+-- Поиск промптов только в корне workspace и в папке Cups
 local function getAllPrompts()
     local prompts = {}
-    local cups = workspace
-    if not cups then return prompts end
 
-    local function search(obj)
-        for _, child in ipairs(obj:GetChildren()) do
-            if child:IsA("ProximityPrompt") then
-                table.insert(prompts, child)
-            else
-                search(child)
+    local function searchIn(container)
+        if not container then return end
+        for _, child in ipairs(container:GetChildren()) do
+            -- Игнорируем персонажей игроков
+            if not Players:GetPlayerFromCharacter(child) then
+                if child:IsA("ProximityPrompt") then
+                    table.insert(prompts, child)
+                else
+                    -- Рекурсивно заходим внутрь, но не дальше дочерних объектов
+                    searchIn(child)
+                end
             end
         end
     end
-    search(cups)
+
+    -- Сканируем корень workspace
+    searchIn(workspace)
+    -- Сканируем папку Cups, если она есть
+    local cups = workspace:FindFirstChild("Cups")
+    if cups then
+        searchIn(cups)
+    end
+
     return prompts
 end
 
@@ -39,19 +51,13 @@ local function getParentObject(prompt)
     return parent
 end
 
--- Пропускаем предметы, содержащие Blood, Garlic или Oil (любое из этих слов)
 local function shouldSkipItem(prompt)
     local obj = getParentObject(prompt)
     if not obj then return false end
     local lowerName = obj.Name:lower()
-    -- Проверяем наличие любого из трёх слов
-    if lowerName:find("blood") or lowerName:find("garlic") or lowerName:find("oil") then
-        return true
-    end
-    return false
+    return lowerName:find("blood") or lowerName:find("garlic") or lowerName:find("oil")
 end
 
--- Проверка, является ли предмет ящиком (box)
 local function isBox(prompt)
     local obj = getParentObject(prompt)
     if not obj then return false end
@@ -122,14 +128,14 @@ local function activatePrompt(prompt)
     return true
 end
 
--- ====== ОСНОВНОЙ ЦИКЛ ======
+-- ====== ОСНОВНОЙ ЦИКЛ (динамический поиск) ======
 
 local function farmCycle()
     while isFarming and not stopRequested do
         rootPart.Anchored = false
 
+        -- Каждый раз заново сканируем (предметы появляются/исчезают)
         local allPrompts = getAllPrompts()
-        -- Фильтрация: убираем Blood, Garlic, Oil
         local prompts = {}
         for _, prompt in ipairs(allPrompts) do
             if not shouldSkipItem(prompt) then
@@ -139,7 +145,6 @@ local function farmCycle()
 
         if #prompts > 0 then
             clearHighlights()
-            -- Подсветка: красный для ящиков (box), зелёный для остальных
             for _, prompt in ipairs(prompts) do
                 local obj = getParentObject(prompt)
                 if obj then
@@ -165,6 +170,7 @@ local function farmCycle()
             rootPart.Anchored = true
         end
 
+        -- Пауза между проходами
         local elapsed = 0
         while elapsed < 5 and isFarming and not stopRequested do
             task.wait(1)
@@ -176,8 +182,7 @@ local function farmCycle()
     rootPart.Anchored = false
 end
 
--- ====== СОЗДАНИЕ GUI ======
-
+-- ====== GUI ======
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "AdminPanel"
 screenGui.ResetOnSpawn = false
@@ -244,8 +249,7 @@ local closeCorner = Instance.new("UICorner")
 closeCorner.CornerRadius = UDim.new(0, 8)
 closeCorner.Parent = closeButton
 
--- ====== ОБРАБОТЧИКИ КНОПОК ======
-
+-- ====== ОБРАБОТЧИКИ ======
 toggleButton.MouseButton1Click:Connect(function()
     if not isFarming then
         isFarming = true
@@ -260,18 +264,14 @@ toggleButton.MouseButton1Click:Connect(function()
     else
         isFarming = false
         stopRequested = true
-
         clearHighlights()
-
         if rootPart then
             rootPart.Anchored = false
         end
-
         if farmCoroutine then
             coroutine.close(farmCoroutine)
             farmCoroutine = nil
         end
-
         toggleButton.Text = "▶ Включить"
         toggleButton.BackgroundColor3 = Color3.new(0.2, 0.6, 0.2)
     end
