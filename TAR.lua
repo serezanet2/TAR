@@ -1,10 +1,15 @@
--- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V2.8) ]] --
+-- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V2.9) ]] --
+-- Изменения V2.9:
+--  * НАСТОЯЩЕЕ удержание через prompt:InputHoldBegin() / :InputHoldEnd()
+--    (эмулирует реальное зажатие клавиши игроком — самый надёжный способ)
+--  * Параллельно спамим fireproximityprompt как fallback
+--  * Отключаем RequiresLineOfSight на время удержания
+--  * Финальный fire после InputHoldEnd для надёжности
 -- Изменения V2.8:
 --  * БОКСЫ В ПРИОРИТЕТЕ: всегда обрабатываются раньше тулз
---  * Жёсткое удержание HoldDuration + 0.5с БЕЗ ранних выходов через Triggered
---  * Постоянное удержание позиции у бокса (анкор + ежекадровая фиксация CFrame)
---  * Спам fireproximityprompt каждые 50мс
---  * Временное увеличение MaxActivationDistance чтоб точно сработало
+--  * Удержание полное HoldDuration + 0.5с
+--  * Анкор + ежекадровая фиксация CFrame
+--  * Временное увеличение MaxActivationDistance
 -- Изменения V2.7:
 --  * Боксы активируются полностью (но через Triggered — не всегда срабатывало)
 --  * Тело анкорится во время удержания
@@ -83,7 +88,7 @@ Corner.Parent = MainFrame
 
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -28, 0, 28)
-TitleLabel.Text = "TMI V2.8 - Box Priority"
+TitleLabel.Text = "TMI V2.9 - InputHold Box"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.BackgroundColor3 = Color3.fromRGB(30, 35, 45)
 TitleLabel.Font = Enum.Font.GothamBold
@@ -361,62 +366,97 @@ local function processQueue()
                 return
             end
 
-            -- V2.8: ЖЁСТКОЕ УДЕРЖАНИЕ. Читаем HoldDuration и держим столько + 0.5 сек запаса.
-            -- Никаких ранних выходов через Triggered — точно дожидаемся полной активации.
+            -- V2.9: НАСТОЯЩЕЕ удержание через InputHoldBegin/End + fireproximityprompt спам.
+            -- Эмулируем реальное нажатие клавиши, как если бы игрок зажал кнопку.
             local holdDuration = tonumber(prompt.HoldDuration) or 0
             local totalHoldTime = holdDuration + 0.5
 
-            StatusLabel.Text = string.format("⏳ Держу: %s (%.1fs)", target.obj.Name, totalHoldTime)
+            StatusLabel.Text = string.format("⏳ Держу %s (%.1fs)...", target.obj.Name, totalHoldTime)
             StatusLabel.TextColor3 = Color3.fromRGB(224, 176, 255)
 
             -- Телепорт к боксу
             local boxCFrame = CFrame.new(target.pos + Vector3.new(0, 3, 0))
             hrp.CFrame = boxCFrame
 
-            -- Анкорим тело, чтоб не упасть/уплыть пока удерживаем
+            -- Анкорим тело
             local wasAnchored = hrp.Anchored
             hrp.Anchored = true
 
-            -- Если у промпта есть MaxActivationDistance — временно увеличиваем чтоб точно сработало
+            -- Временно расширяем MaxActivationDistance чтоб точно был в зоне
             local origMaxDist = prompt.MaxActivationDistance
             pcall(function()
                 prompt.MaxActivationDistance = math.max(origMaxDist or 0, 50)
             end)
 
-            -- Засекаем стартовое время и удерживаем весь промежуток
+            -- Также увеличим RequiresLineOfSight = false (если он включен)
+            local origLineOfSight = prompt.RequiresLineOfSight
+            pcall(function() prompt.RequiresLineOfSight = false end)
+
+            -- Подписываемся на Triggered чтобы знать что бокс открылся (для статуса)
+            local triggered = false
+            local triggeredConn
+            pcall(function()
+                triggeredConn = prompt.Triggered:Connect(function(plr)
+                    if plr == LocalPlayer then triggered = true end
+                end)
+            end)
+
+            -- =========== ОСНОВНОЙ ХАК ===========
+            -- 1) Эмулируем зажатие кнопки методом InputHoldBegin (реальный API ProximityPrompt)
+            local holdBeginOk = pcall(function() prompt:InputHoldBegin() end)
+
+            -- 2) Параллельно спамим fireproximityprompt как fallback (для эксплоитов)
             local startTime = tick()
             local lastFireTime = 0
-            local fireInterval = 0.05  -- спамим fire каждые 50 мс
+            local fireInterval = 0.1  -- спамим fire каждые 100 мс
 
             while tick() - startTime < totalHoldTime do
                 if not _G.CupBoxFarmActive or not _G.ScriptAlive then break end
 
-                -- Каждые 50мс жмём — некоторые античиты требуют постоянного вызова
                 if tick() - lastFireTime >= fireInterval then
                     pcall(function() fireproximityprompt(prompt) end)
                     lastFireTime = tick()
                 end
 
-                -- Удерживаем позицию у бокса (анкор не всегда защищает от внешних сил)
+                -- Удерживаем позицию у бокса (на всякий случай)
                 if hrp.Parent then
                     hrp.CFrame = boxCFrame
                 end
 
-                task.wait()  -- 1 кадр (~16мс), даём CPU отдохнуть
+                task.wait()  -- 1 кадр
             end
 
-            -- Восстанавливаем MaxActivationDistance
+            -- 3) Отпускаем кнопку через InputHoldEnd
+            if holdBeginOk then
+                pcall(function() prompt:InputHoldEnd() end)
+            end
+
+            -- Доп. финальный fire на всякий случай
+            pcall(function() fireproximityprompt(prompt) end)
+            task.wait(0.1)
+
+            -- Отписываемся
+            if triggeredConn then
+                pcall(function() triggeredConn:Disconnect() end)
+            end
+
+            -- Восстанавливаем оригинальные настройки промпта
             pcall(function()
                 if origMaxDist then prompt.MaxActivationDistance = origMaxDist end
+                if origLineOfSight ~= nil then prompt.RequiresLineOfSight = origLineOfSight end
             end)
 
-            -- Снимаем анкор и возвращаемся обратно
+            -- Снимаем анкор и возвращаемся
             hrp.Anchored = wasAnchored
             hrp.CFrame = originalCFrame
 
-            StatusLabel.Text = string.format("✓ Удержал: %s (%.1fs)", target.obj.Name, totalHoldTime)
-            StatusLabel.TextColor3 = Color3.fromRGB(0, 230, 118)
-            -- Добавляем в blacklist чтоб не активировать повторно
+            if triggered then
+                StatusLabel.Text = "✓ Открыт: " .. target.obj.Name
+                StatusLabel.TextColor3 = Color3.fromRGB(0, 230, 118)
+            else
+                StatusLabel.Text = "? Удержал: " .. target.obj.Name
+                StatusLabel.TextColor3 = Color3.fromRGB(220, 200, 100)
+            end
             Blacklist[target.obj] = true
         end
     end)
