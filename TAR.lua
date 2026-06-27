@@ -1,7 +1,7 @@
 --[[
-	Auto Cup & Box Farm V3.6 (Keyword Cups + Universal Boxes)
-	- Чаши: только объекты с именами, содержащими cup/genesis/gold/silver/copper (Tool или Model с ProximityPrompt)
-	- Боксы: любые объекты с "box" в иерархии (кроме supply), HoldDuration > 0
+	Auto Cup & Box Farm V3.7 (Tool Cups + Model Boxes)
+	- Чаши: исключительно Tool/BackpackItem с ключевыми словами (cup, genesis, gold, silver, copper)
+	- Боксы: Model/BasePart с "box" в иерархии (не supply), HoldDuration > 0
 	- Возврат на точку, закрепление, Backspace-дроп, отладка
 --]]
 
@@ -53,7 +53,7 @@ local function debugPrint(msg, color)
 	end
 end
 
--- Проверка на наличие "box" в иерархии (родители, сам объект)
+-- Проверка на "box" в иерархии
 local function hasBoxInHierarchy(obj)
 	local current = obj
 	while current and current ~= workspace do
@@ -67,7 +67,7 @@ local function hasBoxInHierarchy(obj)
 	return false
 end
 
--- Проверка, что предмет находится в руках какого-либо игрока
+-- Проверка на нахождение в руках игрока
 local function isInAnyCharacter(obj)
 	for _, plr in pairs(Players:GetPlayers()) do
 		local char = plr.Character
@@ -94,14 +94,15 @@ local function scan()
 	local cupCount = 0
 	local boxCount = 0
 
-	-- 1. Боксы: универсальный поиск по "box" в иерархии + HoldDuration > 0
+	-- 1. Боксы: Model или BasePart с "box" в иерархии, промпт, HoldDuration > 0
 	for _, obj in ipairs(workspace:GetDescendants()) do
 		if blacklist[obj] then continue end
+		if not (obj:IsA("Model") or obj:IsA("BasePart")) then continue end
 
 		local prompt = findPrompt(obj)
 		if not prompt then continue end
 
-		-- Игнорируем промпты с $
+		-- Игнорируем $
 		local combined = (prompt.ActionText or "") .. (prompt.ObjectText or "") .. (prompt.Name or "")
 		if combined:find("$", 1, true) then
 			blacklist[obj] = true
@@ -119,57 +120,36 @@ local function scan()
 					dur = hold
 				})
 				boxCount = boxCount + 1
-				blacklist[obj] = true  -- чтобы не попало в чаши
+				blacklist[obj] = true
 			end
 		end
 	end
 
-	-- 2. Чаши: ищем строго по ключевым словам (Tool или Model с ProximityPrompt)
+	-- 2. Чаши: только Tool/BackpackItem с ключевыми словами
 	for _, obj in ipairs(workspace:GetDescendants()) do
 		if blacklist[obj] then continue end
+		if not (obj:IsA("Tool") or obj:IsA("BackpackItem")) then continue end
 		if not matchesCupKeyword(obj.Name) then continue end
 
-		-- Пропускаем, если предмет в руках другого игрока
+		-- Игнорируем, если в руках другого игрока или NPC
 		if isInAnyCharacter(obj) then
 			blacklist[obj] = true
 			continue
 		end
 
-		if obj:IsA("Tool") or obj:IsA("BackpackItem") then
-			-- Старый тип: Tool
-			local handle = obj:FindFirstChild("Handle")
-			if handle and not handle.Anchored then
-				table.insert(list, {
-					type = "tool",
-					obj = obj,
-					pos = handle.Position
-				})
-				cupCount = cupCount + 1
-				blacklist[obj] = true
-			end
-		else
-			-- Новый тип: Model с ProximityPrompt
-			local prompt = findPrompt(obj)
-			if prompt then
-				-- Игнорируем, если промпт с долларом
-				local combined = (prompt.ActionText or "") .. (prompt.ObjectText or "") .. (prompt.Name or "")
-				if combined:find("$", 1, true) then
-					blacklist[obj] = true
-					continue
-				end
-				table.insert(list, {
-					type = "prompt_cup",
-					obj = obj,
-					pos = getModelPos(obj),
-					prompt = prompt
-				})
-				cupCount = cupCount + 1
-				blacklist[obj] = true
-			end
+		local handle = obj:FindFirstChild("Handle")
+		if handle and not handle.Anchored then
+			table.insert(list, {
+				type = "tool",
+				obj = obj,
+				pos = handle.Position
+			})
+			cupCount = cupCount + 1
+			blacklist[obj] = true
 		end
 	end
 
-	-- Боксы всегда первые
+	-- Боксы первые
 	table.sort(list, function(a, b)
 		if a.type == "box" and b.type ~= "box" then return true end
 		if a.type ~= "box" and b.type == "box" then return false end
@@ -209,11 +189,6 @@ local function processOne()
 			task.wait(0.05)
 			hum:EquipTool(target.obj)
 			debugPrint("Подобран tool: " .. targetName, Color3.fromRGB(0,230,118))
-		elseif target.type == "prompt_cup" then
-			hrp.CFrame = CFrame.new(target.pos + Vector3.new(0,2,0))
-			task.wait(0.05)
-			fireproximityprompt(target.prompt)
-			debugPrint("Чаша активирована: " .. targetName, Color3.fromRGB(0,230,118))
 		elseif target.type == "box" then
 			local prompt = target.prompt
 			local dur = target.dur + 0.5
@@ -295,7 +270,7 @@ local title = Instance.new("TextLabel", mainFrame)
 title.Size = UDim2.new(0,130,0,30)
 title.Position = UDim2.new(0,5,0,0)
 title.BackgroundTransparency = 1
-title.Text = "Farm V3.6 (Keywords)"
+title.Text = "Farm V3.7 (Tool + Box)"
 title.TextColor3 = Color3.fromRGB(220,220,220)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -440,4 +415,4 @@ closeBtn.MouseButton1Click:Connect(function()
 	gui:Destroy()
 end)
 
-debugPrint("V3.6 – Чаши по ключевым словам, боксы по box", Color3.fromRGB(150,150,150))
+debugPrint("V3.7 – Чаши=Tool, Боксы=Model", Color3.fromRGB(150,150,150))
