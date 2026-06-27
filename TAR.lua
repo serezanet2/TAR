@@ -1,4 +1,8 @@
--- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V2.9) ]] --
+-- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V3.0) ]] --
+-- Изменения V3.0:
+--  * Игнор боксов с "supply" в имени (Supply Box и т.п.) — в blacklist автоматически
+--  * После возврата к исходной точке — DROP всех собранных тулов на землю
+--    (humanoid:UnequipTools() + перенос всех Tool из Backpack в Character)
 -- Изменения V2.9:
 --  * НАСТОЯЩЕЕ удержание через prompt:InputHoldBegin() / :InputHoldEnd()
 --    (эмулирует реальное зажатие клавиши игроком — самый надёжный способ)
@@ -88,7 +92,7 @@ Corner.Parent = MainFrame
 
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -28, 0, 28)
-TitleLabel.Text = "TMI V2.9 - InputHold Box"
+TitleLabel.Text = "TMI V3.0 - Drop & Skip Supply"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.BackgroundColor3 = Color3.fromRGB(30, 35, 45)
 TitleLabel.Font = Enum.Font.GothamBold
@@ -205,6 +209,37 @@ local function isInsideOtherPlayer(tool)
     return false
 end
 
+-- V3.0: Сбрасывает все тулы (включая те что в руке) из инвентаря игрока в Workspace.
+-- Используется после возврата к исходной позиции — освобождает Backpack от собранного.
+local function dropAllTools()
+    local character = LocalPlayer.Character
+    if not character then return 0 end
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if not humanoid or not backpack then return 0 end
+
+    local droppedCount = 0
+
+    -- 1. Сначала перекидываем тулы из Backpack в Character, чтоб humanoid:UnequipTools() мог их сбросить
+    for _, tool in pairs(backpack:GetChildren()) do
+        if tool:IsA("Tool") then
+            pcall(function() tool.Parent = character end)
+        end
+    end
+
+    -- 2. UnequipTools() вызывает .Dropped на всех тулах в Character и сбрасывает их в Workspace
+    pcall(function() humanoid:UnequipTools() end)
+
+    -- 3. Дополнительно: считаем сколько сбросили (для лога/статуса)
+    for _, child in pairs(workspace:GetChildren()) do
+        if child:IsA("Tool") then
+            droppedCount = droppedCount + 1
+        end
+    end
+
+    return droppedCount
+end
+
 local function isShopPrompt(prompt)
     local fields = { prompt.ActionText or "", prompt.ObjectText or "", prompt.Name or "" }
     for _, text in ipairs(fields) do
@@ -232,6 +267,11 @@ local function scanWorkspace()
         if obj:IsA("Model") or obj:IsA("BasePart") then
             local name = string.lower(obj.Name)
             if string.find(name, "box") then
+                -- V3.0: игнорируем боксы с "supply" в имени (Supply Box, SUPPLY_CRATE и т.п.)
+                if string.find(name, "supply") then
+                    Blacklist[obj] = true
+                    continue
+                end
                 if Blacklist[obj] then continue end
 
                 local prompt = nil
@@ -359,6 +399,13 @@ local function processQueue()
             task.wait(0.03)
             hrp.CFrame = originalCFrame
 
+            -- V3.0: после возврата к исходной точке — сбрасываем все собранные тулы на землю
+            task.wait(0.05)
+            local dropped = dropAllTools()
+            if dropped > 0 then
+                StatusLabel.Text = string.format("📤 Сброшено %d тулз", dropped)
+            end
+
         elseif target.type == "box" then
             local prompt = target.prompt
             if not prompt or not prompt.Parent then
@@ -458,6 +505,13 @@ local function processQueue()
                 StatusLabel.TextColor3 = Color3.fromRGB(220, 200, 100)
             end
             Blacklist[target.obj] = true
+
+            -- V3.0: после возврата к исходной точке — сбрасываем все собранные тулы на землю
+            task.wait(0.1)
+            local dropped = dropAllTools()
+            if dropped > 0 then
+                StatusLabel.Text = string.format("📤 Сброшено %d тулз после бокса", dropped)
+            end
         end
     end)
 
