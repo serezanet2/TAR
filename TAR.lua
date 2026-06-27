@@ -1,8 +1,4 @@
--- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V3.4) ]] --
--- Изменения V3.4:
---  * ВСЕ тулы собираются ПАЧКОЙ за один проход (не по одному)
---  * Все Tool из Backpack → Character одним махом (не shuffle, не 20ms паузы)
---  * Один возврат CFrame после всей пачки
+-- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V3.3) ]] --
 -- Изменения V3.3:
 --  * УБРАН дроп предметов (не выбрасываем собранное)
 --  * УБРАНО закрепление HRP (нет Anchored = true)
@@ -103,7 +99,7 @@ Corner.Parent = MainFrame
 
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -28, 0, 28)
-TitleLabel.Text = "TMI V3.4 - Batch All→Char"
+TitleLabel.Text = "TMI V3.3 - NoDrop NoAnchor"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.BackgroundColor3 = Color3.fromRGB(30, 35, 45)
 TitleLabel.Font = Enum.Font.GothamBold
@@ -179,7 +175,7 @@ ClearCorner.Parent = ClearBlacklistButton
 local DropModeLabel = Instance.new("TextLabel")
 DropModeLabel.Size = UDim2.new(0, 220, 0, 22)
 DropModeLabel.Position = UDim2.new(0.5, -110, 0, 150)
-DropModeLabel.Text = "Batch All → Character"
+DropModeLabel.Text = "No Drop • No Anchor • Pure Farm"
 DropModeLabel.TextColor3 = Color3.fromRGB(0, 230, 180)
 DropModeLabel.BackgroundTransparency = 1
 DropModeLabel.Font = Enum.Font.Gotham
@@ -333,8 +329,7 @@ end
 local processingBusy = false
 
 -- ===== БЫСТРЫЙ ПОДБОР (раз в PICKUP_INTERVAL=0.1 сек) =====
--- V3.3: НЕТ дропа, НЕТ анкора.
--- V3.4: Все тулы собираются пачкой → все разом в Character.
+-- V3.3: НЕТ дропа, НЕТ анкора. Только: CFrame → телепорт → подбор → возврат CFrame.
 local function processQueue()
     if processingBusy then return end
     if #TargetsQueue == 0 then return end
@@ -353,18 +348,49 @@ local function processQueue()
             break
         end
     end
+    if not targetIndex then
+        targetIndex = 1
+    end
+    local target = table.remove(TargetsQueue, targetIndex)
+    if not target then return end
+    if not target.obj or not target.obj.Parent then return end
 
-    if targetIndex then
-        -- Обрабатываем один бокс
-        local target = table.remove(TargetsQueue, targetIndex)
-        if not target or not target.obj or not target.obj.Parent then
-            return
-        end
+    processingBusy = true
 
-        processingBusy = true
-        local originalCFrame = hrp.CFrame
+    -- СОХРАНЯЕМ ПОЛНЫЙ CFrame (позиция + поворот) ДО телепорта
+    local originalCFrame = hrp.CFrame
 
-        local ok, err = pcall(function()
+    local ok, err = pcall(function()
+        if target.type == "tool" then
+            if Blacklist[target.obj] then return end
+            if isInPlayerInventory(target.obj) then
+                Blacklist[target.obj] = true
+                return
+            end
+            if isInsideOtherPlayer(target.obj) then
+                Blacklist[target.obj] = true
+                return
+            end
+
+            Blacklist[target.obj] = true
+            StatusLabel.Text = "Беру: " .. target.obj.Name
+            StatusLabel.TextColor3 = Color3.fromRGB(0, 230, 118)
+
+            -- Телепорт к предмету
+            hrp.CFrame = CFrame.new(target.handle.Position)
+            task.wait(0.05)
+            pcall(function() humanoid:EquipTool(target.obj) end)
+            task.wait(0.03)
+
+            -- ВОЗВРАТ НА СОХРАНЁННЫЙ CFrame (позиция + поворот)
+            -- V3.3: БЕЗ анкора, БЕЗ дропа — просто возврат
+            hrp.CFrame = originalCFrame
+            task.wait(0.05)
+
+            StatusLabel.Text = "✓ Взял: " .. target.obj.Name
+            StatusLabel.TextColor3 = Color3.fromRGB(0, 230, 118)
+
+        elseif target.type == "box" then
             local prompt = target.prompt
             if not prompt or not prompt.Parent then
                 Blacklist[target.obj] = true
@@ -377,17 +403,21 @@ local function processQueue()
             StatusLabel.Text = string.format("⏳ Держу %s (%.1fs)...", target.obj.Name, totalHoldTime)
             StatusLabel.TextColor3 = Color3.fromRGB(224, 176, 255)
 
+            -- Телепорт к боксу
             local boxCFrame = CFrame.new(target.pos + Vector3.new(0, 3, 0))
             hrp.CFrame = boxCFrame
 
+            -- Временно расширяем MaxActivationDistance
             local origMaxDist = prompt.MaxActivationDistance
             pcall(function()
                 prompt.MaxActivationDistance = math.max(origMaxDist or 0, 50)
             end)
 
+            -- Отключаем RequiresLineOfSight
             local origLineOfSight = prompt.RequiresLineOfSight
             pcall(function() prompt.RequiresLineOfSight = false end)
 
+            -- Подписываемся на Triggered
             local triggered = false
             local triggeredConn
             pcall(function()
@@ -396,6 +426,7 @@ local function processQueue()
                 end)
             end)
 
+            -- ОСНОВНОЙ ХАК: InputHoldBegin + спам fireproximityprompt
             local holdBeginOk = pcall(function() prompt:InputHoldBegin() end)
 
             local startTime = tick()
@@ -410,6 +441,7 @@ local function processQueue()
                     lastFireTime = tick()
                 end
 
+                -- Удерживаем позицию у бокса
                 if hrp.Parent then
                     hrp.CFrame = boxCFrame
                 end
@@ -417,22 +449,27 @@ local function processQueue()
                 task.wait()
             end
 
+            -- Отпускаем кнопку
             if holdBeginOk then
                 pcall(function() prompt:InputHoldEnd() end)
             end
 
+            -- Финальный fire
             pcall(function() fireproximityprompt(prompt) end)
             task.wait(0.1)
 
+            -- Отписываемся
             if triggeredConn then
                 pcall(function() triggeredConn:Disconnect() end)
             end
 
+            -- Восстанавливаем настройки промпта
             pcall(function()
                 if origMaxDist then prompt.MaxActivationDistance = origMaxDist end
                 if origLineOfSight ~= nil then prompt.RequiresLineOfSight = origLineOfSight end
             end)
 
+            -- V3.3: ВОЗВРАТ НА СОХРАНЁННЫЙ CFrame (БЕЗ анкора, БЕЗ дропа)
             hrp.CFrame = originalCFrame
 
             if triggered then
@@ -443,86 +480,16 @@ local function processQueue()
                 StatusLabel.TextColor3 = Color3.fromRGB(220, 200, 100)
             end
 
+            -- V3.2: навсегда игнорим этот бокс
             Blacklist[target.obj] = true
             PermanentBoxBlacklist[target.obj] = true
-        end)
-
-        processingBusy = false
-
-        if not ok then
-            warn("[TMI V3.4] processQueue box error: " .. tostring(err))
         end
+    end)
 
-    else
-        -- =============================================================
-        -- V3.4: БОКСОВ НЕТ — собираем ВСЕ тулы ПАЧКОЙ
-        -- =============================================================
-        -- 1. Выгребаем все tool-цели из очереди
-        local toolTargets = {}
-        for i = #TargetsQueue, 1, -1 do
-            if TargetsQueue[i].type == "tool" then
-                table.insert(toolTargets, table.remove(TargetsQueue, i))
-            end
-        end
+    processingBusy = false
 
-        if #toolTargets == 0 then return end
-
-        processingBusy = true
-        local originalCFrame = hrp.CFrame
-
-        local ok, err = pcall(function()
-            local pickedCount = 0
-
-            -- 2. Телепорт к каждому тулу и подбор
-            for _, t in ipairs(toolTargets) do
-                if not t.obj or not t.obj.Parent then continue end
-                if Blacklist[t.obj] then continue end
-                if isInPlayerInventory(t.obj) then
-                    Blacklist[t.obj] = true
-                    continue
-                end
-                if isInsideOtherPlayer(t.obj) then
-                    Blacklist[t.obj] = true
-                    continue
-                end
-
-                Blacklist[t.obj] = true
-
-                hrp.CFrame = CFrame.new(t.handle.Position)
-                task.wait(0.05)
-                pcall(function() humanoid:EquipTool(t.obj) end)
-                task.wait(0.03)
-
-                pickedCount = pickedCount + 1
-            end
-
-            -- 3. ВСЕ предметы из Backpack → Character (одним махом)
-            local backpack = LocalPlayer:FindFirstChild("Backpack")
-            local movedCount = 0
-            if backpack then
-                for _, tool in pairs(backpack:GetChildren()) do
-                    if tool:IsA("Tool") then
-                        pcall(function()
-                            tool.Parent = character
-                            movedCount = movedCount + 1
-                        end)
-                    end
-                end
-            end
-
-            -- 4. ВОЗВРАТ (один раз после всего)
-            hrp.CFrame = originalCFrame
-            task.wait(0.05)
-
-            StatusLabel.Text = string.format("✓ Взято %d тулз, %d → Character", pickedCount, movedCount)
-            StatusLabel.TextColor3 = Color3.fromRGB(0, 230, 118)
-        end)
-
-        processingBusy = false
-
-        if not ok then
-            warn("[TMI V3.4] processQueue tools error: " .. tostring(err))
-        end
+    if not ok then
+        warn("[TMI V3.3] processQueue error: " .. tostring(err))
     end
 end
 
