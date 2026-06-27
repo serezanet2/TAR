@@ -1,4 +1,4 @@
--- LocalScript (Cli12412414141242142141242114241214242114ent)
+-- LocalScript (Client)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -136,7 +136,7 @@ local function activatePrompt(prompt)
 
     local offset = Vector3.new(0, 3, 0)
     rootPart.CFrame = CFrame.new(targetPos + offset)
-    task.wait(0.1)
+    task.wait(0.1)    -- задержка 0.1 с перед активацией
 
     prompt:InputHoldBegin()
     task.wait(prompt.HoldDuration)
@@ -175,7 +175,7 @@ local function farmCycle()
                 if returnPosition then
                     rootPart.CFrame = CFrame.new(returnPosition)
                 end
-                task.wait(0.1)
+                task.wait(0.1)   -- пауза между предметами
             end
 
             clearHighlights()
