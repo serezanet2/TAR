@@ -1,11 +1,15 @@
 --[[
-	Auto Cup & Box Farm V3.2 (Universal Cup Detection)
-	- Чаши теперь ищутся по наличию мгновенного ProximityPrompt (HoldDuration=0, нет '$'), а не только по имени.
-	- Старый поиск по ключевым словам оставлен для Tool-чаш.
-	- Улучшена отладка.
+	Auto Cup & Box Farm V3.3 (Reliable Backspace Drop)
+	- Универсальный поиск чаш (по мгновенному ProximityPrompt + старые Tool)
+	- Возврат на исходную точку, закрепление (Anchored) с задержкой
+	- Надёжный дроп через имитацию Backspace (VirtualInputManager)
+	- Отладочное окно с логом
 --]]
 
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local VIM = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 
 local farmActive = false
@@ -29,14 +33,14 @@ local function debugPrint(msg, color)
 	end
 end
 
--- Сканирование (универсальный поиск чаш)
+-- Сканирование
 local function scan()
 	local list = {}
 	local boxCount = 0
 	local cupByPrompt = 0
 	local cupByTool = 0
 
-	-- 1. Боксы (Model/BasePart с "box", не "supply")
+	-- Боксы
 	for _, obj in ipairs(workspace:GetDescendants()) do
 		if not (obj:IsA("Model") or obj:IsA("BasePart")) then continue end
 		local name = obj.Name:lower()
@@ -60,16 +64,15 @@ local function scan()
 		end
 	end
 
-	-- 2. Чаши через универсальный ProximityPrompt (любые объекты с HoldDuration=0 и без '$')
+	-- Чаши через универсальный ProximityPrompt (HoldDuration=0, без '$')
 	for _, obj in ipairs(workspace:GetDescendants()) do
 		if blacklist[obj] then continue end
 		local prompt = hasPrompt(obj)
 		if not prompt then continue end
-		if tonumber(prompt.HoldDuration) ~= 0 then continue end   -- только мгновенные
+		if tonumber(prompt.HoldDuration) ~= 0 then continue end
 		if prompt.ActionText and prompt.ActionText:find("$") then continue end
 		local name = obj.Name:lower()
-		if name:find("box") then continue end   -- боксы уже обработаны
-		-- Не добавляем повторно, если уже в списке (на всякий случай)
+		if name:find("box") then continue end
 		local alreadyInList = false
 		for _, t in ipairs(list) do
 			if t.obj == obj then alreadyInList = true break end
@@ -85,7 +88,7 @@ local function scan()
 		end
 	end
 
-	-- 3. Чаши-инструменты (по ключевым словам, на случай старых Tool)
+	-- Старые Tool-чаши
 	local keywords = { "cup", "genesis", "gold", "silver", "copper" }
 	for _, obj in ipairs(workspace:GetDescendants()) do
 		if blacklist[obj] then continue end
@@ -96,7 +99,7 @@ local function scan()
 			if name:find(kw) then matched = true break end
 		end
 		if not matched then continue end
-		if obj:FindFirstChildWhichIsA("Humanoid") then continue end  -- инструмент в руках NPC?
+		if obj:FindFirstChildWhichIsA("Humanoid") then continue end
 		local handle = obj:FindFirstChild("Handle")
 		if handle and not handle.Anchored then
 			table.insert(list, {
@@ -175,20 +178,29 @@ local function process()
 	pcall(function() if hrp.Parent then hrp.CFrame = origCFrame; if farmActive then hrp.Anchored = true end end end)
 end
 
--- Цикл дропа
+-- Цикл дропа (Backspace)
 task.spawn(function()
 	while scriptAlive do
 		if farmActive and dropActive then
 			local char = LocalPlayer.Character
 			local hrp = char and char:FindFirstChild("HumanoidRootPart")
-			if hrp and hrp.Anchored then
+			local hum = char and char:FindFirstChildOfClass("Humanoid")
+			if hrp and hrp.Anchored and hum then
 				local tools = {}
 				local bp = LocalPlayer:FindFirstChild("Backpack")
 				if bp then for _,t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then table.insert(tools,t) end end end
 				if char then for _,t in ipairs(char:GetChildren()) do if t:IsA("Tool") then table.insert(tools,t) end end end
 				if #tools > 0 then
 					local tool = tools[math.random(#tools)]
-					tool.Parent = workspace
+					if tool.Parent ~= char then
+						pcall(function() hum:EquipTool(tool) end)
+						task.wait(0.1)
+					end
+					pcall(function()
+						VIM:SendKeyEvent(true, Enum.KeyCode.Backspace, false, nil)
+						task.wait(0.1)
+						VIM:SendKeyEvent(false, Enum.KeyCode.Backspace, false, nil)
+					end)
 					debugPrint("Дроп: " .. tool.Name, Color3.fromRGB(255,180,100))
 				end
 			end
@@ -219,7 +231,7 @@ local title = Instance.new("TextLabel", mainFrame)
 title.Size = UDim2.new(0,130,0,30)
 title.Position = UDim2.new(0,5,0,0)
 title.BackgroundTransparency = 1
-title.Text = "Cup & Box Farm V3.2"
+title.Text = "Cup & Box Farm V3.3"
 title.TextColor3 = Color3.fromRGB(220,220,220)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -364,4 +376,4 @@ closeBtn.MouseButton1Click:Connect(function()
 	gui:Destroy()
 end)
 
-debugPrint("V3.2 – Универсальный поиск чаш", Color3.fromRGB(150,150,150))
+debugPrint("V3.3 – Надёжный Backspace-дроп", Color3.fromRGB(150,150,150))
