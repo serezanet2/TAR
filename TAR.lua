@@ -1,4 +1,4 @@
--- LocalScript (Client)
+-- LocalScript (Cl44444ient)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -11,15 +11,17 @@ local currentHighlights = {}
 local farmCoroutine = nil
 local stopRequested = false
 
--- Разрешённые ключевые слова (нижний регистр)
+-- Разрешённые ключевые слова
 local ALLOWED_WORDS = {"box", "cup", "genesis", "silver", "gold", "copper"}
+
+-- Для восстановления исходного Enabled у промптов
+local originalEnabledStates = {}
 
 -- ====== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ======
 
--- Поиск промптов только в корне workspace и в папке Cups
+-- Поиск всех промптов в корне workspace и папке Cups
 local function getAllPrompts()
     local prompts = {}
-
     local function searchIn(container)
         if not container then return end
         for _, child in ipairs(container:GetChildren()) do
@@ -27,18 +29,16 @@ local function getAllPrompts()
                 if child:IsA("ProximityPrompt") then
                     table.insert(prompts, child)
                 else
-                    searchIn(child)  -- рекурсивно внутрь объектов
+                    searchIn(child)
                 end
             end
         end
     end
-
     searchIn(workspace)
     local cups = workspace:FindFirstChild("Cups")
     if cups then
         searchIn(cups)
     end
-
     return prompts
 end
 
@@ -50,27 +50,21 @@ local function getParentObject(prompt)
     return parent
 end
 
--- Проверка, нужно ли пропустить предмет:
--- 1. Всегда пропускаем Blood / Garlic / Oil
--- 2. Разрешаем только те, у которых в имени есть одно из ALLOWED_WORDS
+-- Проверка, нужно ли пропустить предмет
 local function shouldSkipItem(prompt)
     local obj = getParentObject(prompt)
     if not obj then return true end
     local lowerName = obj.Name:lower()
 
-    -- Мусор исключаем сразу
     if lowerName:find("blood") or lowerName:find("garlic") or lowerName:find("oil") then
         return true
     end
 
-    -- Проверяем, есть ли хотя бы одно разрешённое слово
     for _, word in ipairs(ALLOWED_WORDS) do
         if lowerName:find(word) then
-            return false  -- Не пропускаем, это нужный предмет
+            return false
         end
     end
-
-    -- Не найдено ни одного разрешённого слова – пропускаем
     return true
 end
 
@@ -136,12 +130,36 @@ local function activatePrompt(prompt)
 
     local offset = Vector3.new(0, 3, 0)
     rootPart.CFrame = CFrame.new(targetPos + offset)
-    task.wait(0.1)    -- задержка 0.1 с перед активацией
+    task.wait(0.1)  -- задержка перед началом удержания
 
     prompt:InputHoldBegin()
-    task.wait(prompt.HoldDuration)
+    -- Минимальная длительность удержания 0.1 секунды
+    local holdTime = math.max(prompt.HoldDuration, 0.1)
+    task.wait(holdTime)
     prompt:InputHoldEnd()
     return true
+end
+
+-- Отключение нежелательных промптов и запоминание исходного состояния
+local function disableUnwantedPrompts(allPrompts)
+    for _, prompt in ipairs(allPrompts) do
+        if originalEnabledStates[prompt] == nil then
+            originalEnabledStates[prompt] = prompt.Enabled
+        end
+        if shouldSkipItem(prompt) then
+            prompt.Enabled = false
+        end
+    end
+end
+
+-- Восстановление исходного Enabled
+local function restorePromptsEnabled()
+    for prompt, originalState in pairs(originalEnabledStates) do
+        if prompt and prompt.Parent then
+            prompt.Enabled = originalState
+        end
+    end
+    originalEnabledStates = {}
 end
 
 -- ====== ОСНОВНОЙ ЦИКЛ ======
@@ -151,16 +169,18 @@ local function farmCycle()
         rootPart.Anchored = false
 
         local allPrompts = getAllPrompts()
-        local prompts = {}
+        disableUnwantedPrompts(allPrompts)
+
+        local validPrompts = {}
         for _, prompt in ipairs(allPrompts) do
             if not shouldSkipItem(prompt) then
-                table.insert(prompts, prompt)
+                table.insert(validPrompts, prompt)
             end
         end
 
-        if #prompts > 0 then
+        if #validPrompts > 0 then
             clearHighlights()
-            for _, prompt in ipairs(prompts) do
+            for _, prompt in ipairs(validPrompts) do
                 local obj = getParentObject(prompt)
                 if obj then
                     local useRed = isBox(prompt)
@@ -169,13 +189,13 @@ local function farmCycle()
                 end
             end
 
-            for _, prompt in ipairs(prompts) do
+            for _, prompt in ipairs(validPrompts) do
                 if not isFarming or stopRequested then break end
                 activatePrompt(prompt)
                 if returnPosition then
                     rootPart.CFrame = CFrame.new(returnPosition)
                 end
-                task.wait(0.1)   -- пауза между предметами
+                task.wait(0.1)
             end
 
             clearHighlights()
@@ -266,6 +286,13 @@ closeCorner.Parent = closeButton
 -- ====== ОБРАБОТЧИКИ ======
 toggleButton.MouseButton1Click:Connect(function()
     if not isFarming then
+        -- Запоминаем исходное состояние всех текущих промптов
+        local initialPrompts = getAllPrompts()
+        originalEnabledStates = {}
+        for _, prompt in ipairs(initialPrompts) do
+            originalEnabledStates[prompt] = prompt.Enabled
+        end
+
         isFarming = true
         stopRequested = false
         toggleButton.Text = "⏹ Остановить"
@@ -286,6 +313,7 @@ toggleButton.MouseButton1Click:Connect(function()
             coroutine.close(farmCoroutine)
             farmCoroutine = nil
         end
+        restorePromptsEnabled()
         toggleButton.Text = "▶ Включить"
         toggleButton.BackgroundColor3 = Color3.new(0.2, 0.6, 0.2)
     end
@@ -302,6 +330,7 @@ closeButton.MouseButton1Click:Connect(function()
         coroutine.close(farmCoroutine)
         farmCoroutine = nil
     end
+    restorePromptsEnabled()
     screenGui:Destroy()
 end)
 
