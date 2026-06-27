@@ -1,4 +1,4 @@
--- LocalScript (C121211212121lient)
+-- LocalScript (Client11111111111111)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -10,6 +10,7 @@ local returnPosition = nil
 local currentHighlights = {}
 local farmCoroutine = nil
 local stopRequested = false
+local restartRequested = false
 
 -- Разрешённые ключевые слова
 local ALLOWED_WORDS = {"box", "cup", "genesis", "silver", "gold", "copper"}
@@ -122,16 +123,30 @@ local function getTargetPosition(prompt)
     return nil
 end
 
+-- Проверка, существует ли ещё промпт и его объект
+local function isPromptValid(prompt)
+    if not prompt or not prompt.Parent then return false end
+    return getParentObject(prompt) ~= nil
+end
+
+-- Активация промпта с боковым смещением
 local function activatePrompt(prompt)
+    if not isPromptValid(prompt) then return false end
+
     local targetPos = getTargetPosition(prompt)
     if not targetPos then return false end
 
-    local offset = Vector3.new(0, 3, 0)
+    -- Смещение в случайную сторону по XZ на расстояние до 1 блока
+    local angle = math.random() * 2 * math.pi
+    local dist = math.random() * 1
+    local xOff = math.cos(angle) * dist
+    local zOff = math.sin(angle) * dist
+    local offset = Vector3.new(xOff, 0, zOff)
+
     rootPart.CFrame = CFrame.new(targetPos + offset)
-    task.wait(0.1)  -- задержка перед началом удержания
+    task.wait(0.1)
 
     prompt:InputHoldBegin()
-    -- Всегда добавляем 0.1 секунды к штатному времени
     local holdTime = prompt.HoldDuration + 0.1
     task.wait(holdTime)
     prompt:InputHoldEnd()
@@ -164,9 +179,11 @@ local function farmCycle()
     while isFarming and not stopRequested do
         rootPart.Anchored = false
 
+        -- Новое сканирование
         local allPrompts = getAllPrompts()
         disableUnwantedPrompts(allPrompts)
 
+        -- Отбор разрешённых
         local validPrompts = {}
         for _, prompt in ipairs(allPrompts) do
             if not shouldSkipItem(prompt) then
@@ -174,9 +191,25 @@ local function farmCycle()
             end
         end
 
-        if #validPrompts > 0 then
+        -- Разделяем на боксы и остальное
+        local boxPrompts = {}
+        local otherPrompts = {}
+        for _, prompt in ipairs(validPrompts) do
+            if isBox(prompt) then
+                table.insert(boxPrompts, prompt)
+            else
+                table.insert(otherPrompts, prompt)
+            end
+        end
+
+        -- Порядок: сначала боксы, потом остальные
+        local sortedPrompts = {}
+        for _, v in ipairs(boxPrompts) do table.insert(sortedPrompts, v) end
+        for _, v in ipairs(otherPrompts) do table.insert(sortedPrompts, v) end
+
+        if #sortedPrompts > 0 then
             clearHighlights()
-            for _, prompt in ipairs(validPrompts) do
+            for _, prompt in ipairs(sortedPrompts) do
                 local obj = getParentObject(prompt)
                 if obj then
                     local useRed = isBox(prompt)
@@ -185,10 +218,13 @@ local function farmCycle()
                 end
             end
 
-            for _, prompt in ipairs(validPrompts) do
+            for _, prompt in ipairs(sortedPrompts) do
                 if not isFarming or stopRequested then break end
-                activatePrompt(prompt)
-                if returnPosition then
+                -- Проверяем, не пропал ли предмет перед активацией
+                if isPromptValid(prompt) then
+                    activatePrompt(prompt)
+                end
+                if returnPosition and rootPart then
                     rootPart.CFrame = CFrame.new(returnPosition)
                 end
                 task.wait(0.1)
@@ -201,15 +237,36 @@ local function farmCycle()
             rootPart.Anchored = true
         end
 
-        local elapsed = 0
-        while elapsed < 5 and isFarming and not stopRequested do
-            task.wait(1)
-            elapsed = elapsed + 1
+        -- Пауза между проходами (прерывается при запросе перезапуска)
+        local waited = 0
+        while waited < 5 and isFarming and not stopRequested do
+            if restartRequested then
+                restartRequested = false
+                break  -- выходим из паузы, начнём новый цикл сканирования
+            end
+            task.wait(0.5)
+            waited = waited + 0.5
         end
     end
 
     clearHighlights()
     rootPart.Anchored = false
+end
+
+-- ====== ТАЙМЕР АВТОРЕСТАРТА ======
+
+local restartTimerCoroutine
+local function startRestartTimer()
+    if restartTimerCoroutine then coroutine.close(restartTimerCoroutine) end
+    restartTimerCoroutine = coroutine.create(function()
+        while isFarming do
+            task.wait(5)
+            if isFarming then
+                restartRequested = true
+            end
+        end
+    end)
+    coroutine.resume(restartTimerCoroutine)
 end
 
 -- ====== GUI ======
@@ -282,6 +339,7 @@ closeCorner.Parent = closeButton
 -- ====== ОБРАБОТЧИКИ ======
 toggleButton.MouseButton1Click:Connect(function()
     if not isFarming then
+        -- Запоминаем исходное состояние всех промптов
         local initialPrompts = getAllPrompts()
         originalEnabledStates = {}
         for _, prompt in ipairs(initialPrompts) do
@@ -290,9 +348,12 @@ toggleButton.MouseButton1Click:Connect(function()
 
         isFarming = true
         stopRequested = false
+        restartRequested = false
         toggleButton.Text = "⏹ Остановить"
         toggleButton.BackgroundColor3 = Color3.new(0.6, 0.2, 0.2)
         returnPosition = rootPart.Position
+
+        startRestartTimer()  -- запускаем таймер авторестарта
 
         if farmCoroutine then coroutine.close(farmCoroutine) end
         farmCoroutine = coroutine.create(farmCycle)
@@ -307,6 +368,10 @@ toggleButton.MouseButton1Click:Connect(function()
         if farmCoroutine then
             coroutine.close(farmCoroutine)
             farmCoroutine = nil
+        end
+        if restartTimerCoroutine then
+            coroutine.close(restartTimerCoroutine)
+            restartTimerCoroutine = nil
         end
         restorePromptsEnabled()
         toggleButton.Text = "▶ Включить"
@@ -324,6 +389,10 @@ closeButton.MouseButton1Click:Connect(function()
     if farmCoroutine then
         coroutine.close(farmCoroutine)
         farmCoroutine = nil
+    end
+    if restartTimerCoroutine then
+        coroutine.close(restartTimerCoroutine)
+        restartTimerCoroutine = nil
     end
     restorePromptsEnabled()
     screenGui:Destroy()
