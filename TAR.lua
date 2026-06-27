@@ -1,483 +1,142 @@
---[[
-    Auto Cup & Box Farm V2.6 (фикс поиска)
-    - Ищет цели в workspace.Cups (если папка есть), иначе по всему workspace.
-    - Очередь накапливается, дубли исключаются.
-    - Одно сканирование за раз.
---]]
-
+-- LocalScript (Client)
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local UIS = game:GetService("UserInputService")
-local VIM = game:GetService("VirtualInputManager")
-local LocalPlayer = Players.LocalPlayer
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local rootPart = character:WaitForChild("HumanoidRootPart")
+local humanoid = character:WaitForChild("Humanoid")
 
-local farmActive = false
-local autoDropActive = false
-local scriptAlive = true
+-- Переменные состояния
+local isFarming = false          -- флаг работы автофарма
+local returnPosition = nil       -- точка возврата
+local farmCoroutine = nil        -- ссылка на корутину цикла
 
-local targetsQueue = {}
-local targetObjectsSet = {}
+-- Поиск всех ProximityPrompt внутри workspace.Cups (рекурсивно)
+local function getAllPrompts()
+    local prompts = {}
+    local cups = workspace:FindFirstChild("Cups")
+    if not cups then return prompts end
 
-local Blacklist = setmetatable({}, { __mode = "k" })
-local PermanentBlacklist = setmetatable({}, { __mode = "k" })
-
-local TOOL_KEYWORDS = { "cup", "genesis", "gold", "silver", "copper" }
-
-local function matchesKeyword(name)
-    local lower = string.lower(name)
-    for _, kw in ipairs(TOOL_KEYWORDS) do
-        if lower:find(kw) then return true end
-    end
-    return false
-end
-
-local function isInAnyCharacter(model)
-    for _, plr in pairs(Players:GetPlayers()) do
-        local char = plr.Character
-        if char and model:IsDescendantOf(char) then
-            return true
-        end
-    end
-    return false
-end
-
-local function promptHasDollar(model)
-    for _, desc in pairs(model:GetDescendants()) do
-        if desc:IsA("ProximityPrompt") then
-            local combined = (desc.ActionText or "") .. (desc.ObjectText or "") .. (desc.Name or "")
-            if combined:find("$", 1, true) then
-                return true
-            end
-        end
-    end
-    return false
-end
-
-local function isAnchored(obj)
-    if obj:IsA("BasePart") then return obj.Anchored end
-    local handle = obj:FindFirstChild("Handle")
-    if handle and handle:IsA("BasePart") then return handle.Anchored end
-    local anyPart = obj:FindFirstChildWhichIsA("BasePart")
-    if anyPart then return anyPart.Anchored end
-    return false
-end
-
-local function getModelPosition(model)
-    if model.PrimaryPart then return model.PrimaryPart.Position end
-    for _, child in pairs(model:GetDescendants()) do
-        if child:IsA("BasePart") then return child.Position end
-    end
-    return model:GetPivot().Position
-end
-
-local function cleanQueue()
-    for i = #targetsQueue, 1, -1 do
-        local target = targetsQueue[i]
-        if not target.obj or not target.obj.Parent then
-            table.remove(targetsQueue, i)
-            if target.obj then
-                targetObjectsSet[target.obj] = nil
-            end
-        end
-    end
-end
-
--- Главное изменение: ищем в workspace.Cups, если доступен
-local function scanWorkspace()
-    cleanQueue()
-
-    local newBoxes = {}
-    local newTools = {}
-
-    -- Пробуем найти папку Cups, иначе сканируем весь workspace
-    local root = workspace:FindFirstChild("Cups")
-    if not root then
-        root = workspace
-    end
-
-    for _, obj in pairs(root:GetDescendants()) do
-        if (obj:IsA("Model") or obj:IsA("BasePart")) then
-            local name = string.lower(obj.Name)
-            if name:find("box") then
-                if name:find("supply") then
-                    Blacklist[obj] = true
-                    PermanentBlacklist[obj] = true
-                else
-                    if not Blacklist[obj] and not PermanentBlacklist[obj] then
-                        local prompt = nil
-                        for _, d in pairs(obj:GetDescendants()) do
-                            if d:IsA("ProximityPrompt") then
-                                prompt = d
-                                break
-                            end
-                        end
-                        if prompt and not promptHasDollar(obj) then
-                            local targetPos = getModelPosition(obj)
-                            if targetPos then
-                                table.insert(newBoxes, {
-                                    type = "box",
-                                    obj = obj,
-                                    prompt = prompt,
-                                    pos = targetPos,
-                                    holdDuration = tonumber(prompt.HoldDuration) or 0
-                                })
-                            end
-                        else
-                            Blacklist[obj] = true
-                            PermanentBlacklist[obj] = true
-                        end
-                    end
-                end
-            end
-        end
-
-        if (obj:IsA("Tool") or obj:IsA("BackpackItem")) then
-            if not matchesKeyword(obj.Name) then continue end
-            if Blacklist[obj] or PermanentBlacklist[obj] then continue end
-            if isInAnyCharacter(obj) then
-                Blacklist[obj] = true
-                continue
-            end
-            if isAnchored(obj) then
-                Blacklist[obj] = true
-                continue
-            end
-
-            local handle = obj:FindFirstChild("Handle") or obj:FindFirstChildWhichIsA("BasePart")
-            if handle and not handle.Anchored then
-                table.insert(newTools, {
-                    type = "tool",
-                    obj = obj,
-                    handle = handle,
-                    pos = handle.Position
-                })
+    local function search(obj)
+        for _, child in ipairs(obj:GetChildren()) do
+            if child:IsA("ProximityPrompt") then
+                table.insert(prompts, child)
             else
-                Blacklist[obj] = true
+                search(child) -- рекурсивный обход
             end
         end
     end
-
-    local newTargets = {}
-    for _, t in ipairs(newBoxes) do table.insert(newTargets, t) end
-    for _, t in ipairs(newTools) do table.insert(newTargets, t) end
-
-    for _, target in ipairs(newTargets) do
-        if not targetObjectsSet[target.obj] and not Blacklist[target.obj] and not PermanentBlacklist[target.obj] then
-            table.insert(targetsQueue, target)
-            targetObjectsSet[target.obj] = true
-        end
-    end
+    search(cups)
+    return prompts
 end
 
-local function dropRandomItem()
-    local character = LocalPlayer.Character
-    if not character then return end
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    if not humanoid then return end
-
-    local tools = {}
-    local backpack = LocalPlayer:FindFirstChild("Backpack")
-    if backpack then
-        for _, item in ipairs(backpack:GetChildren()) do
-            if item:IsA("Tool") then table.insert(tools, item) end
+-- Получение позиции для телепортации к промпту
+local function getTargetPosition(prompt)
+    local parent = prompt.Parent
+    if parent:IsA("BasePart") then
+        return parent.Position
+    else
+        -- Ищем Handle или PrimaryPart
+        local handle = parent:FindFirstChild("Handle")
+        if handle and handle:IsA("BasePart") then
+            return handle.Position
+        end
+        local primary = parent:FindFirstChild("PrimaryPart")
+        if primary and primary:IsA("BasePart") then
+            return primary.Position
+        end
+        -- Иначе ищем любую BasePart внутри
+        for _, child in ipairs(parent:GetDescendants()) do
+            if child:IsA("BasePart") then
+                return child.Position
+            end
         end
     end
-    for _, item in ipairs(character:GetChildren()) do
-        if item:IsA("Tool") then table.insert(tools, item) end
-    end
-    if #tools == 0 then return end
-
-    local randomTool = tools[math.random(#tools)]
-    if randomTool.Parent ~= character then
-        pcall(function() humanoid:EquipTool(randomTool) end)
-        task.wait(0.1)
-    end
-
-    pcall(function()
-        VIM:SendKeyEvent(true, Enum.KeyCode.Backspace, false, nil)
-        task.wait(0.1)
-        VIM:SendKeyEvent(false, Enum.KeyCode.Backspace, false, nil)
-    end)
+    return nil
 end
 
-task.spawn(function()
-    while scriptAlive do
-        if farmActive and autoDropActive then
-            local char = LocalPlayer.Character
-            local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            if hrp and hrp.Anchored then
-                pcall(dropRandomItem)
-                task.wait(0.5)
-            end
-        end
-        task.wait(0.2)
-    end
-end)
+-- Симуляция удержания промпта (с телепортацией)
+local function activatePrompt(prompt)
+    local targetPos = getTargetPosition(prompt)
+    if not targetPos then return false end
 
-local busy = false
+    -- Телепортируемся к цели (с небольшим смещением вверх)
+    local offset = Vector3.new(0, 3, 0)
+    rootPart.CFrame = CFrame.new(targetPos + offset)
+    task.wait(0.1) -- даём время на телепорт
 
-local function processOneTarget()
-    if busy then return end
-    if #targetsQueue == 0 then return end
+    -- Имитация нажатия и удержания
+    prompt:InputHoldBegin()
+    task.wait(prompt.HoldDuration) -- ждём, пока удержание завершится
+    prompt:InputHoldEnd()
+    return true
+end
 
-    local character = LocalPlayer.Character
-    if not character then return end
-    local hrp = character:FindFirstChild("HumanoidRootPart")
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    if not hrp or not humanoid then return end
+-- Основной цикл фарма
+local function farmCycle()
+    while isFarming do
+        -- 1. Сканируем каждые 10 секунд
+        local prompts = getAllPrompts()
+        if #prompts > 0 then
+            for _, prompt in ipairs(prompts) do
+                if not isFarming then break end -- остановка при выключении
 
-    busy = true
+                -- Активируем промпт
+                activatePrompt(prompt)
 
-    if hrp.Anchored then
-        hrp.Anchored = false
-    end
-
-    local originalCFrame = hrp.CFrame
-    local target = table.remove(targetsQueue, 1)
-    if target and target.obj then
-        targetObjectsSet[target.obj] = nil
-    end
-
-    local ok, err = pcall(function()
-        if not target.obj or not target.obj.Parent then return end
-
-        if target.type == "tool" then
-            if Blacklist[target.obj] then return end
-            if isInAnyCharacter(target.obj) then
-                Blacklist[target.obj] = true
-                return
-            end
-            Blacklist[target.obj] = true
-
-            hrp.CFrame = CFrame.new(target.pos + Vector3.new(0, 2, 0))
-            task.wait(0.05)
-            pcall(function() humanoid:EquipTool(target.obj) end)
-            task.wait(0.03)
-
-        elseif target.type == "box" then
-            local prompt = target.prompt
-            if not prompt or not prompt.Parent then
-                Blacklist[target.obj] = true
-                PermanentBlacklist[target.obj] = true
-                return
-            end
-
-            local holdDuration = target.holdDuration
-            local totalHoldTime = holdDuration + 0.5
-
-            local boxCFrame = CFrame.new(target.pos + Vector3.new(0, 3, 0))
-            hrp.CFrame = boxCFrame
-
-            local origMaxDist = prompt.MaxActivationDistance
-            local origLineOfSight = prompt.RequiresLineOfSight
-            pcall(function() prompt.MaxActivationDistance = math.max(origMaxDist or 0, 50) end)
-            pcall(function() prompt.RequiresLineOfSight = false end)
-
-            local holdOk = pcall(function() prompt:InputHoldBegin() end)
-
-            local startTime = tick()
-            while tick() - startTime < totalHoldTime do
-                if not farmActive or not scriptAlive then break end
-                pcall(function() fireproximityprompt(prompt) end)
-                if hrp.Parent then
-                    hrp.CFrame = boxCFrame
+                -- Возвращаемся в исходную точку
+                if returnPosition then
+                    rootPart.CFrame = CFrame.new(returnPosition)
                 end
-                task.wait(0.1)
-            end
 
-            if holdOk then
-                pcall(function() prompt:InputHoldEnd() end)
-            end
-            pcall(function() fireproximityprompt(prompt) end)
-            task.wait(0.1)
-
-            pcall(function()
-                if origMaxDist then prompt.MaxActivationDistance = origMaxDist end
-                if origLineOfSight ~= nil then prompt.RequiresLineOfSight = origLineOfSight end
-            end)
-
-            Blacklist[target.obj] = true
-            PermanentBlacklist[target.obj] = true
-        end
-    end)
-
-    pcall(function()
-        if hrp and hrp.Parent then
-            hrp.CFrame = originalCFrame
-            if farmActive then
-                task.wait(0.15)
-                hrp.Anchored = true
+                task.wait(0.1) -- пауза 0.1 сек между промптами
             end
         end
-    end)
 
-    if not ok then
-        warn("[Farm] Ошибка обработки: " .. tostring(err))
+        -- Ждём 10 секунд до следующего сканирования (с возможностью прерывания)
+        local elapsed = 0
+        while elapsed < 10 and isFarming do
+            task.wait(1)
+            elapsed = elapsed + 1
+        end
     end
-
-    busy = false
 end
 
-task.spawn(function()
-    while scriptAlive do
-        if farmActive then
-            pcall(scanWorkspace)
-        end
-        task.wait(5)
-    end
-end)
+-- ====== СОЗДАНИЕ GUI ======
+local screenGui = Instance.new("ScreenGui")
+screenGui.Parent = player:WaitForChild("PlayerGui")
 
-task.spawn(function()
-    while scriptAlive do
-        if farmActive and not busy then
-            pcall(processOneTarget)
-        end
-        task.wait(0.1)
-    end
-end)
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 200, 0, 100)
+frame.Position = UDim2.new(0.5, -100, 0.5, -50)
+frame.BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)
+frame.Parent = screenGui
 
--- ========================
--- GUI
--- ========================
-local gui = Instance.new("ScreenGui")
-gui.Name = "CupBoxFarmGUI"
-gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-gui.ResetOnSpawn = false
+local button = Instance.new("TextButton")
+button.Size = UDim2.new(0, 180, 0, 50)
+button.Position = UDim2.new(0.5, -90, 0.5, -25)
+button.Text = "Включить авто фарм"
+button.BackgroundColor3 = Color3.new(0.3, 0.8, 0.3)
+button.Parent = frame
 
-local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 220, 0, 30)
-mainFrame.Position = UDim2.new(0, 100, 0, 100)
-mainFrame.BackgroundColor3 = Color3.fromRGB(20, 25, 35)
-mainFrame.BorderSizePixel = 0
-mainFrame.Active = true
-mainFrame.Draggable = true
-mainFrame.Parent = gui
+-- Обработка нажатия на кнопку
+button.MouseButton1Click:Connect(function()
+    isFarming = not isFarming
 
-local cornerMain = Instance.new("UICorner")
-cornerMain.CornerRadius = UDim.new(0, 8)
-cornerMain.Parent = mainFrame
+    if isFarming then
+        button.Text = "Выключить авто фарм"
+        button.BackgroundColor3 = Color3.new(0.8, 0.3, 0.3)
 
-local titleLabel = Instance.new("TextLabel")
-titleLabel.Size = UDim2.new(0, 120, 0, 30)
-titleLabel.Position = UDim2.new(0, 5, 0, 0)
-titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "Cup & Box Farm V2.5"
-titleLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
-titleLabel.Font = Enum.Font.GothamBold
-titleLabel.TextSize = 14
-titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-titleLabel.Parent = mainFrame
+        -- Запоминаем текущую позицию как точку возврата
+        returnPosition = rootPart.Position
 
-local toggleBtn = Instance.new("TextButton")
-toggleBtn.Size = UDim2.new(0, 30, 0, 30)
-toggleBtn.Position = UDim2.new(1, -30, 0, 0)
-toggleBtn.Text = "-"
-toggleBtn.BackgroundTransparency = 1
-toggleBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
-toggleBtn.Font = Enum.Font.GothamBold
-toggleBtn.TextSize = 24
-toggleBtn.Parent = mainFrame
-
-local contentFrame = Instance.new("Frame")
-contentFrame.Size = UDim2.new(1, 0, 0, 120)
-contentFrame.Position = UDim2.new(0, 0, 0, 35)
-contentFrame.BackgroundColor3 = Color3.fromRGB(30, 35, 45)
-contentFrame.BackgroundTransparency = 0.2
-contentFrame.BorderSizePixel = 0
-contentFrame.Visible = true
-contentFrame.Parent = mainFrame
-
-local cornerContent = Instance.new("UICorner")
-cornerContent.CornerRadius = UDim.new(0, 8)
-cornerContent.Parent = contentFrame
-
-local farmBtn = Instance.new("TextButton")
-farmBtn.Size = UDim2.new(0, 200, 0, 30)
-farmBtn.Position = UDim2.new(0.5, -100, 0, 10)
-farmBtn.Text = "Auto Farm (OFF)"
-farmBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-farmBtn.BackgroundTransparency = 0.3
-farmBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-farmBtn.Font = Enum.Font.GothamBold
-farmBtn.TextSize = 14
-farmBtn.Parent = contentFrame
-
-local cornerFarmBtn = Instance.new("UICorner")
-cornerFarmBtn.CornerRadius = UDim.new(0, 6)
-cornerFarmBtn.Parent = farmBtn
-
-local dropBtn = Instance.new("TextButton")
-dropBtn.Size = UDim2.new(0, 200, 0, 30)
-dropBtn.Position = UDim2.new(0.5, -100, 0, 45)
-dropBtn.Text = "Auto Drop (OFF)"
-dropBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-dropBtn.BackgroundTransparency = 0.3
-dropBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-dropBtn.Font = Enum.Font.GothamBold
-dropBtn.TextSize = 14
-dropBtn.Parent = contentFrame
-
-local cornerDropBtn = Instance.new("UICorner")
-cornerDropBtn.CornerRadius = UDim.new(0, 6)
-cornerDropBtn.Parent = dropBtn
-
-local closeBtn = Instance.new("TextButton")
-closeBtn.Size = UDim2.new(0, 200, 0, 30)
-closeBtn.Position = UDim2.new(0.5, -100, 0, 80)
-closeBtn.Text = "Close GUI"
-closeBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
-closeBtn.BackgroundTransparency = 0.3
-closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-closeBtn.Font = Enum.Font.GothamBold
-closeBtn.TextSize = 14
-closeBtn.Parent = contentFrame
-
-local cornerCloseBtn = Instance.new("UICorner")
-cornerCloseBtn.CornerRadius = UDim.new(0, 6)
-cornerCloseBtn.Parent = closeBtn
-
-toggleBtn.MouseButton1Click:Connect(function()
-    contentFrame.Visible = not contentFrame.Visible
-    toggleBtn.Text = contentFrame.Visible and "-" or "+"
-end)
-
-farmBtn.MouseButton1Click:Connect(function()
-    farmActive = not farmActive
-    if farmActive then
-        farmBtn.Text = "Auto Farm (ON)"
-        farmBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+        -- Запускаем цикл в отдельной корутине
+        if farmCoroutine then coroutine.close(farmCoroutine) end
+        farmCoroutine = coroutine.create(farmCycle)
+        coroutine.resume(farmCoroutine)
     else
-        farmBtn.Text = "Auto Farm (OFF)"
-        farmBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-        targetsQueue = {}
-        targetObjectsSet = {}
-        local char = LocalPlayer.Character
-        local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        if hrp then hrp.Anchored = false end
+        button.Text = "Включить авто фарм"
+        button.BackgroundColor3 = Color3.new(0.3, 0.8, 0.3)
+        -- Остановка произойдёт автоматически (флаг isFarming = false)
+        farmCoroutine = nil
     end
-end)
-
-dropBtn.MouseButton1Click:Connect(function()
-    autoDropActive = not autoDropActive
-    if autoDropActive then
-        dropBtn.Text = "Auto Drop (ON)"
-        dropBtn.BackgroundColor3 = Color3.fromRGB(200, 150, 0)
-    else
-        dropBtn.Text = "Auto Drop (OFF)"
-        dropBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-    end
-end)
-
-closeBtn.MouseButton1Click:Connect(function()
-    scriptAlive = false
-    farmActive = false
-    autoDropActive = false
-    targetsQueue = {}
-    targetObjectsSet = {}
-    Blacklist = setmetatable({}, { __mode = "k" })
-    PermanentBlacklist = setmetatable({}, { __mode = "k" })
-    local char = LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if hrp then hrp.Anchored = false end
-    gui:Destroy()
 end)
