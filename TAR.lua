@@ -1,35 +1,27 @@
--- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V3.0) ]] --
+-- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V3.1 — CHARACTER MODE) ]] --
+-- Изменения V3.1:
+--  * ВСЕ предметы помещаются в МОДЕЛЬ ИГРОКА (Character), а НЕ в Backpack/инвентарь
+--    — Тулы лежат в Character (workspace), а не в инвентаре
+--  * После возврата — DROP тулов из Character в Workspace
+--  * `isInPlayerInventory` проверяет Character вместо Backpack
+--  * `dropAllTools` ищет тулы в Character и сбрасывает в Workspace
 -- Изменения V3.0:
 --  * Игнор боксов с "supply" в имени (Supply Box и т.п.) — в blacklist автоматически
 --  * После возврата к исходной точке — DROP всех собранных тулов на землю
---    (humanoid:UnequipTools() + перенос всех Tool из Backpack в Character)
 -- Изменения V2.9:
 --  * НАСТОЯЩЕЕ удержание через prompt:InputHoldBegin() / :InputHoldEnd()
---    (эмулирует реальное зажатие клавиши игроком — самый надёжный способ)
---  * Параллельно спамим fireproximityprompt как fallback
---  * Отключаем RequiresLineOfSight на время удержания
---  * Финальный fire после InputHoldEnd для надёжности
 -- Изменения V2.8:
 --  * БОКСЫ В ПРИОРИТЕТЕ: всегда обрабатываются раньше тулз
---  * Удержание полное HoldDuration + 0.5с
---  * Анкор + ежекадровая фиксация CFrame
---  * Временное увеличение MaxActivationDistance
 -- Изменения V2.7:
---  * Боксы активируются полностью (но через Triggered — не всегда срабатывало)
---  * Тело анкорится во время удержания
 --  * Флаг processingBusy блокирует параллельные цели
 -- Изменения V2.6:
---  * Добавлена кнопка ✕ (Close) — полностью удаляет скрипт, чистит все ресурсы
---  * Игнорирует предметы внутри ДРУГИХ ИГРОКОВ (тулы в руках/рюкзаке других Character)
+--  * Добавлена кнопка ✕ (Close) — полностью удаляет скрипт
 -- Изменения V2.5:
 --  * Переработаны тайминги: сканирование каждые 5 сек, подбор каждые 0.1 сек
---  * Добавлен упрощённый FreeCam (без плавностей, без скрытия GUI)
---  * FreeCam: WASD движение, Space - вверх, Q - вниз, Shift - медленно
---  * Камера от 1 лица с центром привязанным к курсору
---  * Выход из FreeCam: клавиша F или повторное нажатие кнопки (для тач-устройств)
+--  * Добавлен упрощённый FreeCam
 -- Изменения V2.4:
---  * Бокс может быть Model или BasePart (раньше только BasePart)
---  * ProximityPrompt ищется РЕКУРСИВНО внутри бокса (box.Main.ProximityPrompt и т.п.)
+--  * Бокс может быть Model или BasePart
+--  * ProximityPrompt ищется РЕКУРСИВНО внутри бокса
 -- Изменения V2.3:
 --  * Добавлены ключевые слова "gold", "silver", "copper"
 -- Изменения V2.2:
@@ -44,11 +36,11 @@ local LocalPlayer = Players.LocalPlayer
 
 _G.CupBoxFarmActive = false
 _G.FreeCamActive = false
-_G.ScriptAlive = true  -- V2.6: флаг живости для остановки циклов при закрытии
+_G.ScriptAlive = true
 
 -- ===== НАСТРОЙКИ ТАЙМИНГОВ =====
-local SCAN_INTERVAL = 5      -- Сканирование Workspace каждые 5 сек
-local PICKUP_INTERVAL = 0.1  -- Подбор найденных предметов каждые 0.1 сек
+local SCAN_INTERVAL = 5
+local PICKUP_INTERVAL = 0.1
 
 -- Ключевые слова для поиска инструментов (case-insensitive)
 local TOOL_KEYWORDS = { "cup", "genesis", "gold", "silver", "copper" }
@@ -66,7 +58,7 @@ end
 -- Blacklist по Instance reference
 local Blacklist = setmetatable({}, { __mode = "k" })
 
--- Очередь обнаруженных целей (заполняется каждые 5 сек, обрабатывается каждые 0.1 сек)
+-- Очередь обнаруженных целей
 local TargetsQueue = {}
 
 -- ===== СОЗДАНИЕ GUI =====
@@ -92,7 +84,7 @@ Corner.Parent = MainFrame
 
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -28, 0, 28)
-TitleLabel.Text = "TMI V3.0 - Drop & Skip Supply"
+TitleLabel.Text = "TMI V3.1 - Character Mode"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.BackgroundColor3 = Color3.fromRGB(30, 35, 45)
 TitleLabel.Font = Enum.Font.GothamBold
@@ -103,7 +95,6 @@ local TitleCorner = Instance.new("UICorner")
 TitleCorner.CornerRadius = UDim.new(0, 8)
 TitleCorner.Parent = TitleLabel
 
--- Кнопка закрытия скрипта (крестик в правом верхнем углу)
 local CloseButton = Instance.new("TextButton")
 CloseButton.Size = UDim2.new(0, 28, 0, 28)
 CloseButton.Position = UDim2.new(1, -28, 0, 0)
@@ -119,7 +110,6 @@ local CloseCorner = Instance.new("UICorner")
 CloseCorner.CornerRadius = UDim.new(0, 8)
 CloseCorner.Parent = CloseButton
 
--- Кнопка Farm
 local ToggleButton = Instance.new("TextButton")
 ToggleButton.Size = UDim2.new(0, 200, 0, 36)
 ToggleButton.Position = UDim2.new(0.5, -100, 0, 36)
@@ -134,7 +124,6 @@ local ToggleCorner = Instance.new("UICorner")
 ToggleCorner.CornerRadius = UDim.new(0, 6)
 ToggleCorner.Parent = ToggleButton
 
--- Кнопка FreeCam
 local FreeCamButton = Instance.new("TextButton")
 FreeCamButton.Size = UDim2.new(0, 200, 0, 36)
 FreeCamButton.Position = UDim2.new(0.5, -100, 0, 78)
@@ -149,7 +138,6 @@ local FreeCamCorner = Instance.new("UICorner")
 FreeCamCorner.CornerRadius = UDim.new(0, 6)
 FreeCamCorner.Parent = FreeCamButton
 
--- Кнопка очистки blacklist
 local ClearBlacklistButton = Instance.new("TextButton")
 ClearBlacklistButton.Size = UDim2.new(0, 200, 0, 26)
 ClearBlacklistButton.Position = UDim2.new(0.5, -100, 0, 120)
@@ -178,26 +166,22 @@ StatusLabel.Parent = MainFrame
 
 -- ===== ХЕЛПЕРЫ ДЛЯ ПРОВЕРКИ =====
 
+-- V3.1: ИЗМЕНЕНО — проверяет, находится ли тул в МОДЕЛИ ИГРОКА (Character),
+-- а не в Backpack/инвентаре.
 local function isInPlayerInventory(tool)
-    local backpack = LocalPlayer:FindFirstChild("Backpack")
     local character = LocalPlayer.Character
-    if backpack and tool:IsDescendantOf(backpack) then return true end
-    if character and tool:IsDescendantOf(character) then return true end
+    if character and tool:IsDescendantOf(character) then
+        return true
+    end
     return false
 end
 
--- Проверяет находится ли предмет внутри ДРУГОГО игрока (где-то в иерархии есть Humanoid
--- из другого Character'a). Это нужно чтобы не телепортироваться к игроку и не пытаться
--- забрать у него тулу из руки.
 local function isInsideOtherPlayer(tool)
     local myCharacter = LocalPlayer.Character
     local parent = tool.Parent
     while parent and parent ~= game do
-        -- Если нашли Humanoid в иерархии родителей
         if parent:FindFirstChildOfClass("Humanoid") then
-            -- И этот Character не наш — игнорируем предмет
             if parent ~= myCharacter then
-                -- Дополнительно проверяем, что это вообще игровой персонаж
                 local plr = Players:GetPlayerFromCharacter(parent)
                 if plr or parent:FindFirstChildOfClass("Humanoid") then
                     return true
@@ -209,31 +193,20 @@ local function isInsideOtherPlayer(tool)
     return false
 end
 
--- V3.0: Сбрасывает все тулы (включая те что в руке) из инвентаря игрока в Workspace.
--- Используется после возврата к исходной позиции — освобождает Backpack от собранного.
+-- V3.1: ИЗМЕНЕНО — Сбрасывает все тулы из МОДЕЛИ ИГРОКА (Character) в Workspace.
 local function dropAllTools()
     local character = LocalPlayer.Character
     if not character then return 0 end
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    local backpack = LocalPlayer:FindFirstChild("Backpack")
-    if not humanoid or not backpack then return 0 end
 
     local droppedCount = 0
 
-    -- 1. Сначала перекидываем тулы из Backpack в Character, чтоб humanoid:UnequipTools() мог их сбросить
-    for _, tool in pairs(backpack:GetChildren()) do
-        if tool:IsA("Tool") then
-            pcall(function() tool.Parent = character end)
-        end
-    end
-
-    -- 2. UnequipTools() вызывает .Dropped на всех тулах в Character и сбрасывает их в Workspace
-    pcall(function() humanoid:UnequipTools() end)
-
-    -- 3. Дополнительно: считаем сколько сбросили (для лога/статуса)
-    for _, child in pairs(workspace:GetChildren()) do
+    -- Перебираем все дочерние элементы Character и сбрасываем Tool'ы в Workspace
+    for _, child in pairs(character:GetChildren()) do
         if child:IsA("Tool") then
-            droppedCount = droppedCount + 1
+            pcall(function()
+                child.Parent = workspace
+                droppedCount = droppedCount + 1
+            end)
         end
     end
 
@@ -257,17 +230,15 @@ local function isAnchored(obj)
     return false
 end
 
--- ===== СКАНИРОВАНИЕ (раз в SCAN_INTERVAL=5 сек, заполняет очередь TargetsQueue) =====
+-- ===== СКАНИРОВАНИЕ =====
 local function scanWorkspace()
     TargetsQueue = {}
 
-    -- V2.8: БОКСЫ В ПРИОРИТЕТЕ. Сканируем их первыми и кладём в начало очереди.
-    -- 1. БОКСЫ (Model/BasePart с "box" + рекурсивный поиск ProximityPrompt)
+    -- 1. БОКСЫ (Model/BasePart с "box")
     for _, obj in pairs(workspace:GetDescendants()) do
         if obj:IsA("Model") or obj:IsA("BasePart") then
             local name = string.lower(obj.Name)
             if string.find(name, "box") then
-                -- V3.0: игнорируем боксы с "supply" в имени (Supply Box, SUPPLY_CRATE и т.п.)
                 if string.find(name, "supply") then
                     Blacklist[obj] = true
                     continue
@@ -311,7 +282,7 @@ local function scanWorkspace()
         end
     end
 
-    -- 2. ИНСТРУМЕНТЫ (Cup/Genesis/Gold/Silver/Copper) — добавляются после боксов
+    -- 2. ИНСТРУМЕНТЫ
     for _, obj in pairs(workspace:GetDescendants()) do
         if obj:IsA("Tool") or obj:IsA("BackpackItem") then
             if matchesKeyword(obj.Name) then
@@ -332,7 +303,6 @@ local function scanWorkspace()
         end
     end
 
-    -- Подсчитаем боксы для статуса
     local boxCount = 0
     for _, t in ipairs(TargetsQueue) do
         if t.type == "box" then boxCount = boxCount + 1 end
@@ -341,11 +311,9 @@ local function scanWorkspace()
     StatusLabel.TextColor3 = Color3.fromRGB(150, 200, 255)
 end
 
--- Флаг занятости — пока обрабатываем одну цель (особенно бокс с длинным HoldDuration),
--- следующий тик процесса не должен запускать новый таргет параллельно.
 local processingBusy = false
 
--- ===== БЫСТРЫЙ ПОДБОР (раз в PICKUP_INTERVAL=0.1 сек, берёт одну цель из очереди) =====
+-- ===== БЫСТРЫЙ ПОДБОР =====
 local function processQueue()
     if processingBusy then return end
     if #TargetsQueue == 0 then return end
@@ -356,7 +324,6 @@ local function processQueue()
     local humanoid = character:FindFirstChild("Humanoid")
     if not hrp or not humanoid then return end
 
-    -- V2.8: БОКСЫ В ПРИОРИТЕТЕ. Сначала ищем box в очереди, и только если их нет — берём tool.
     local targetIndex = nil
     for i, t in ipairs(TargetsQueue) do
         if t.type == "box" then
@@ -364,15 +331,12 @@ local function processQueue()
             break
         end
     end
-    if not targetIndex then
-        -- Боксов нет — берём первую цель (она будет tool'ом)
-        targetIndex = 1
-    end
+    if not targetIndex then targetIndex = 1 end
+
     local target = table.remove(TargetsQueue, targetIndex)
     if not target then return end
     if not target.obj or not target.obj.Parent then return end
 
-    -- Устанавливаем флаг занятости. Снимем его в конце через ok/err-обёртку.
     processingBusy = true
     local ok, err = pcall(function()
         local originalCFrame = hrp.CFrame
@@ -383,7 +347,6 @@ local function processQueue()
                 Blacklist[target.obj] = true
                 return
             end
-            -- V2.6: предмет успел попасть в руку другому игроку — игнор
             if isInsideOtherPlayer(target.obj) then
                 Blacklist[target.obj] = true
                 return
@@ -395,11 +358,16 @@ local function processQueue()
 
             hrp.CFrame = CFrame.new(target.handle.Position)
             task.wait(0.05)
-            pcall(function() humanoid:EquipTool(target.obj) end)
+
+            -- V3.1: ИЗМЕНЕНО — Помещаем тул ПРЯМО в Character (модель игрока),
+            -- а НЕ через EquipTool (который кладёт в Backpack).
+            pcall(function()
+                target.obj.Parent = character
+            end)
+
             task.wait(0.03)
             hrp.CFrame = originalCFrame
 
-            -- V3.0: после возврата к исходной точке — сбрасываем все собранные тулы на землю
             task.wait(0.05)
             local dropped = dropAllTools()
             if dropped > 0 then
@@ -413,33 +381,26 @@ local function processQueue()
                 return
             end
 
-            -- V2.9: НАСТОЯЩЕЕ удержание через InputHoldBegin/End + fireproximityprompt спам.
-            -- Эмулируем реальное нажатие клавиши, как если бы игрок зажал кнопку.
             local holdDuration = tonumber(prompt.HoldDuration) or 0
             local totalHoldTime = holdDuration + 0.5
 
             StatusLabel.Text = string.format("⏳ Держу %s (%.1fs)...", target.obj.Name, totalHoldTime)
             StatusLabel.TextColor3 = Color3.fromRGB(224, 176, 255)
 
-            -- Телепорт к боксу
             local boxCFrame = CFrame.new(target.pos + Vector3.new(0, 3, 0))
             hrp.CFrame = boxCFrame
 
-            -- Анкорим тело
             local wasAnchored = hrp.Anchored
             hrp.Anchored = true
 
-            -- Временно расширяем MaxActivationDistance чтоб точно был в зоне
             local origMaxDist = prompt.MaxActivationDistance
             pcall(function()
                 prompt.MaxActivationDistance = math.max(origMaxDist or 0, 50)
             end)
 
-            -- Также увеличим RequiresLineOfSight = false (если он включен)
             local origLineOfSight = prompt.RequiresLineOfSight
             pcall(function() prompt.RequiresLineOfSight = false end)
 
-            -- Подписываемся на Triggered чтобы знать что бокс открылся (для статуса)
             local triggered = false
             local triggeredConn
             pcall(function()
@@ -448,52 +409,33 @@ local function processQueue()
                 end)
             end)
 
-            -- =========== ОСНОВНОЙ ХАК ===========
-            -- 1) Эмулируем зажатие кнопки методом InputHoldBegin (реальный API ProximityPrompt)
             local holdBeginOk = pcall(function() prompt:InputHoldBegin() end)
 
-            -- 2) Параллельно спамим fireproximityprompt как fallback (для эксплоитов)
             local startTime = tick()
             local lastFireTime = 0
-            local fireInterval = 0.1  -- спамим fire каждые 100 мс
+            local fireInterval = 0.1
 
             while tick() - startTime < totalHoldTime do
                 if not _G.CupBoxFarmActive or not _G.ScriptAlive then break end
-
                 if tick() - lastFireTime >= fireInterval then
                     pcall(function() fireproximityprompt(prompt) end)
                     lastFireTime = tick()
                 end
-
-                -- Удерживаем позицию у бокса (на всякий случай)
-                if hrp.Parent then
-                    hrp.CFrame = boxCFrame
-                end
-
-                task.wait()  -- 1 кадр
+                if hrp.Parent then hrp.CFrame = boxCFrame end
+                task.wait()
             end
 
-            -- 3) Отпускаем кнопку через InputHoldEnd
-            if holdBeginOk then
-                pcall(function() prompt:InputHoldEnd() end)
-            end
-
-            -- Доп. финальный fire на всякий случай
+            if holdBeginOk then pcall(function() prompt:InputHoldEnd() end) end
             pcall(function() fireproximityprompt(prompt) end)
             task.wait(0.1)
 
-            -- Отписываемся
-            if triggeredConn then
-                pcall(function() triggeredConn:Disconnect() end)
-            end
+            if triggeredConn then pcall(function() triggeredConn:Disconnect() end) end
 
-            -- Восстанавливаем оригинальные настройки промпта
             pcall(function()
                 if origMaxDist then prompt.MaxActivationDistance = origMaxDist end
                 if origLineOfSight ~= nil then prompt.RequiresLineOfSight = origLineOfSight end
             end)
 
-            -- Снимаем анкор и возвращаемся
             hrp.Anchored = wasAnchored
             hrp.CFrame = originalCFrame
 
@@ -506,7 +448,6 @@ local function processQueue()
             end
             Blacklist[target.obj] = true
 
-            -- V3.0: после возврата к исходной точке — сбрасываем все собранные тулы на землю
             task.wait(0.1)
             local dropped = dropAllTools()
             if dropped > 0 then
@@ -515,24 +456,20 @@ local function processQueue()
         end
     end)
 
-    -- В любом случае снимаем флаг занятости
     processingBusy = false
-
     if not ok then
-        warn("[TMI V2.7] processQueue error: " .. tostring(err))
+        warn("[TMI V3.1] processQueue error: " .. tostring(err))
     end
 end
 
--- =====================================================================
--- ===== FREECAM (упрощённый, без плавностей, центр привязан к курсору)
--- =====================================================================
+-- ===== FREECAM =====
 local camera = workspace.CurrentCamera
 local freeCamCFrame = nil
 local freeCamPitch = 0
 local freeCamYaw = 0
 local freeCamRender = nil
 local freeCamMouseConn = nil
-local SPEED = 50      -- studs/sec
+local SPEED = 50
 local SLOW_SPEED = 12
 local MOUSE_SENS = 0.005
 
@@ -540,7 +477,6 @@ local function startFreeCam()
     if _G.FreeCamActive then return end
     _G.FreeCamActive = true
 
-    -- Инициализация позиции/углов из текущей камеры
     freeCamCFrame = camera.CFrame
     local lookVec = camera.CFrame.LookVector
     freeCamPitch = math.asin(lookVec.Y)
@@ -552,7 +488,6 @@ local function startFreeCam()
     FreeCamButton.Text = "FreeCam: ON (F=exit)"
     FreeCamButton.BackgroundColor3 = Color3.fromRGB(0, 150, 220)
 
-    -- Мышь: поворот
     freeCamMouseConn = UIS.InputChanged:Connect(function(input)
         if not _G.FreeCamActive then return end
         if input.UserInputType == Enum.UserInputType.MouseMovement then
@@ -561,10 +496,8 @@ local function startFreeCam()
         end
     end)
 
-    -- Каждый кадр: считаем движение и применяем камеру (БЕЗ плавностей)
     freeCamRender = RS.RenderStepped:Connect(function(dt)
         if not _G.FreeCamActive then return end
-
         local moveX, moveY, moveZ = 0, 0, 0
         if UIS:IsKeyDown(Enum.KeyCode.W) then moveZ = moveZ - 1 end
         if UIS:IsKeyDown(Enum.KeyCode.S) then moveZ = moveZ + 1 end
@@ -574,14 +507,11 @@ local function startFreeCam()
         if UIS:IsKeyDown(Enum.KeyCode.Q) then moveY = moveY - 1 end
 
         local speed = (UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift)) and SLOW_SPEED or SPEED
-
-        -- Строим CFrame из углов (от 1 лица, центр = курсор/середина экрана)
         local rotCFrame = CFrame.fromEulerAnglesYXZ(freeCamPitch, freeCamYaw, 0)
         local moveVec = rotCFrame:VectorToWorldSpace(Vector3.new(moveX, 0, moveZ))
         moveVec = moveVec + Vector3.new(0, moveY, 0)
 
         freeCamCFrame = CFrame.new(freeCamCFrame.Position + moveVec * speed * dt) * rotCFrame.Rotation
-        -- Применяем CFrame с поворотом из углов и позицией
         camera.CFrame = CFrame.new(freeCamCFrame.Position) * rotCFrame
     end)
 end
@@ -589,13 +519,10 @@ end
 local function stopFreeCam()
     if not _G.FreeCamActive then return end
     _G.FreeCamActive = false
-
-    if freeCamRender then freeCamRender:Disconnect() freeCamRender = nil end
-    if freeCamMouseConn then freeCamMouseConn:Disconnect() freeCamMouseConn = nil end
-
+    if freeCamRender then freeCamRender:Disconnect(); freeCamRender = nil end
+    if freeCamMouseConn then freeCamMouseConn:Disconnect(); freeCamMouseConn = nil end
     UIS.MouseBehavior = Enum.MouseBehavior.Default
     camera.CameraType = Enum.CameraType.Custom
-
     FreeCamButton.Text = "FreeCam: OFF (F=exit)"
     FreeCamButton.BackgroundColor3 = Color3.fromRGB(60, 100, 180)
 end
@@ -610,7 +537,7 @@ ToggleButton.MouseButton1Click:Connect(function()
     if _G.CupBoxFarmActive then
         ToggleButton.Text = "Farm: ON"
         ToggleButton.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
-        StatusLabel.Text = "Farm Enabled. Скан каждые 5с, подбор каждые 0.1с"
+        StatusLabel.Text = "Farm Enabled. Скан каждые 5с, подбор каждые 0.1с\nТулы → Character (не Backpack)"
         StatusLabel.TextColor3 = Color3.fromRGB(0, 230, 118)
     else
         ToggleButton.Text = "Farm: OFF"
@@ -630,37 +557,20 @@ ClearBlacklistButton.MouseButton1Click:Connect(function()
     StatusLabel.TextColor3 = Color3.fromRGB(255, 200, 80)
 end)
 
--- ===== ПОЛНОЕ ЗАКРЫТИЕ СКРИПТА (V2.6) =====
--- Останавливает все циклы, отключает FreeCam, чистит все ссылки и удаляет GUI
-local fInputConn = nil  -- forward-declare для коннекшена клавиши F
+-- ===== ПОЛНОЕ ЗАКРЫТИЕ =====
+local fInputConn = nil
 
 local function destroyScript()
-    -- 1. Выключаем все режимы
     _G.CupBoxFarmActive = false
-    _G.ScriptAlive = false  -- остановит while-циклы скана и подбора
-
-    -- 2. Выключаем FreeCam если был активен
-    if _G.FreeCamActive then
-        pcall(stopFreeCam)
-    end
-
-    -- 3. Чистим очередь и blacklist
+    _G.ScriptAlive = false
+    if _G.FreeCamActive then pcall(stopFreeCam) end
     TargetsQueue = {}
     Blacklist = setmetatable({}, { __mode = "k" })
-
-    -- 4. Отключаем коннекшены клавиатуры
-    if fInputConn then
-        fInputConn:Disconnect()
-        fInputConn = nil
-    end
-
-    -- 5. Восстанавливаем поведение мыши и камеру (на случай если FreeCam подвис)
+    if fInputConn then fInputConn:Disconnect(); fInputConn = nil end
     pcall(function()
         UIS.MouseBehavior = Enum.MouseBehavior.Default
         camera.CameraType = Enum.CameraType.Custom
     end)
-
-    -- 5b. V2.7: снимаем Anchored у HRP на случай если убили скрипт во время активации бокса
     pcall(function()
         local char = LocalPlayer.Character
         if char then
@@ -668,11 +578,7 @@ local function destroyScript()
             if hrp then hrp.Anchored = false end
         end
     end)
-
-    -- 6. Удаляем GUI
     pcall(function() ScreenGui:Destroy() end)
-
-    -- 7. Сбрасываем глобалы (на случай повторного запуска скрипта)
     _G.CupBoxFarmActive = nil
     _G.FreeCamActive = nil
     _G.ScriptAlive = nil
@@ -680,7 +586,6 @@ end
 
 CloseButton.MouseButton1Click:Connect(destroyScript)
 
--- Клавиша F — выход из FreeCam
 fInputConn = UIS.InputBegan:Connect(function(input, processed)
     if processed then return end
     if input.KeyCode == Enum.KeyCode.F and _G.FreeCamActive then
@@ -688,22 +593,16 @@ fInputConn = UIS.InputBegan:Connect(function(input, processed)
     end
 end)
 
--- ===== ЦИКЛ СКАНИРОВАНИЯ (каждые SCAN_INTERVAL сек) =====
 task.spawn(function()
     while _G.ScriptAlive do
-        if _G.CupBoxFarmActive then
-            pcall(scanWorkspace)
-        end
+        if _G.CupBoxFarmActive then pcall(scanWorkspace) end
         task.wait(SCAN_INTERVAL)
     end
 end)
 
--- ===== ЦИКЛ ПОДБОРА (каждые PICKUP_INTERVAL сек) =====
 task.spawn(function()
     while _G.ScriptAlive do
-        if _G.CupBoxFarmActive then
-            pcall(processQueue)
-        end
+        if _G.CupBoxFarmActive then pcall(processQueue) end
         task.wait(PICKUP_INTERVAL)
     end
 end)
