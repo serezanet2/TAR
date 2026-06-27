@@ -15,7 +15,7 @@ local stopRequested = false
 
 local function getAllPrompts()
     local prompts = {}
-    local cups = workspace:FindFirstChild("Cups")
+    local cups = workspace
     if not cups then return prompts end
 
     local function search(obj)
