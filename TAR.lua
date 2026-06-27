@@ -1,10 +1,14 @@
--- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V2.7) ]] --
+-- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V2.8) ]] --
+-- Изменения V2.8:
+--  * БОКСЫ В ПРИОРИТЕТЕ: всегда обрабатываются раньше тулз
+--  * Жёсткое удержание HoldDuration + 0.5с БЕЗ ранних выходов через Triggered
+--  * Постоянное удержание позиции у бокса (анкор + ежекадровая фиксация CFrame)
+--  * Спам fireproximityprompt каждые 50мс
+--  * Временное увеличение MaxActivationDistance чтоб точно сработало
 -- Изменения V2.7:
---  * Боксы теперь активируются ПОЛНОСТЬЮ: ждём HoldDuration + 0.5с запаса
---  * Подписка на prompt.Triggered для точного определения момента активации
---  * Тело анкорится во время удержания (не падает/не уплывает)
---  * Флаг processingBusy блокирует параллельный запуск следующей цели
---  * Повторный fire каждые 0.1 сек на случай античитов требующих "real hold"
+--  * Боксы активируются полностью (но через Triggered — не всегда срабатывало)
+--  * Тело анкорится во время удержания
+--  * Флаг processingBusy блокирует параллельные цели
 -- Изменения V2.6:
 --  * Добавлена кнопка ✕ (Close) — полностью удаляет скрипт, чистит все ресурсы
 --  * Игнорирует предметы внутри ДРУГИХ ИГРОКОВ (тулы в руках/рюкзаке других Character)
@@ -79,7 +83,7 @@ Corner.Parent = MainFrame
 
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -28, 0, 28)
-TitleLabel.Text = "TMI V2.7 - Hold Box Fix"
+TitleLabel.Text = "TMI V2.8 - Box Priority"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.BackgroundColor3 = Color3.fromRGB(30, 35, 45)
 TitleLabel.Font = Enum.Font.GothamBold
@@ -217,29 +221,8 @@ end
 local function scanWorkspace()
     TargetsQueue = {}
 
-    -- 1. ИНСТРУМЕНТЫ (Cup/Genesis/Gold/Silver/Copper)
-    for _, obj in pairs(workspace:GetDescendants()) do
-        if obj:IsA("Tool") or obj:IsA("BackpackItem") then
-            if matchesKeyword(obj.Name) then
-                if Blacklist[obj] then continue end
-                if isInPlayerInventory(obj) then Blacklist[obj] = true; continue end
-                -- НОВОЕ V2.6: игнор предметов внутри другого игрока (в руке/рюкзаке другого Character)
-                if isInsideOtherPlayer(obj) then Blacklist[obj] = true; continue end
-                if isAnchored(obj) then Blacklist[obj] = true; continue end
-
-                local handle = obj:FindFirstChild("Handle") or obj:FindFirstChildWhichIsA("BasePart")
-                if handle and not handle.Anchored then
-                    table.insert(TargetsQueue, {
-                        type = "tool",
-                        obj = obj,
-                        handle = handle,
-                    })
-                end
-            end
-        end
-    end
-
-    -- 2. БОКСЫ (Model/BasePart с "box" + рекурсивный поиск ProximityPrompt)
+    -- V2.8: БОКСЫ В ПРИОРИТЕТЕ. Сканируем их первыми и кладём в начало очереди.
+    -- 1. БОКСЫ (Model/BasePart с "box" + рекурсивный поиск ProximityPrompt)
     for _, obj in pairs(workspace:GetDescendants()) do
         if obj:IsA("Model") or obj:IsA("BasePart") then
             local name = string.lower(obj.Name)
@@ -275,6 +258,7 @@ local function scanWorkspace()
                             obj = obj,
                             prompt = prompt,
                             pos = targetPos,
+                            holdDuration = (tonumber(prompt.HoldDuration) or 0),
                         })
                     end
                 end
@@ -282,7 +266,33 @@ local function scanWorkspace()
         end
     end
 
-    StatusLabel.Text = string.format("Сканирование завершено: %d целей в очереди", #TargetsQueue)
+    -- 2. ИНСТРУМЕНТЫ (Cup/Genesis/Gold/Silver/Copper) — добавляются после боксов
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj:IsA("Tool") or obj:IsA("BackpackItem") then
+            if matchesKeyword(obj.Name) then
+                if Blacklist[obj] then continue end
+                if isInPlayerInventory(obj) then Blacklist[obj] = true; continue end
+                if isInsideOtherPlayer(obj) then Blacklist[obj] = true; continue end
+                if isAnchored(obj) then Blacklist[obj] = true; continue end
+
+                local handle = obj:FindFirstChild("Handle") or obj:FindFirstChildWhichIsA("BasePart")
+                if handle and not handle.Anchored then
+                    table.insert(TargetsQueue, {
+                        type = "tool",
+                        obj = obj,
+                        handle = handle,
+                    })
+                end
+            end
+        end
+    end
+
+    -- Подсчитаем боксы для статуса
+    local boxCount = 0
+    for _, t in ipairs(TargetsQueue) do
+        if t.type == "box" then boxCount = boxCount + 1 end
+    end
+    StatusLabel.Text = string.format("Скан: %d боксов, %d тулз", boxCount, #TargetsQueue - boxCount)
     StatusLabel.TextColor3 = Color3.fromRGB(150, 200, 255)
 end
 
@@ -301,7 +311,19 @@ local function processQueue()
     local humanoid = character:FindFirstChild("Humanoid")
     if not hrp or not humanoid then return end
 
-    local target = table.remove(TargetsQueue, 1)
+    -- V2.8: БОКСЫ В ПРИОРИТЕТЕ. Сначала ищем box в очереди, и только если их нет — берём tool.
+    local targetIndex = nil
+    for i, t in ipairs(TargetsQueue) do
+        if t.type == "box" then
+            targetIndex = i
+            break
+        end
+    end
+    if not targetIndex then
+        -- Боксов нет — берём первую цель (она будет tool'ом)
+        targetIndex = 1
+    end
+    local target = table.remove(TargetsQueue, targetIndex)
     if not target then return end
     if not target.obj or not target.obj.Parent then return end
 
@@ -339,62 +361,63 @@ local function processQueue()
                 return
             end
 
-            local holdDuration = (prompt.HoldDuration or 0)
-            StatusLabel.Text = string.format("Активирую: %s (hold %.1fs)", target.obj.Name, holdDuration)
+            -- V2.8: ЖЁСТКОЕ УДЕРЖАНИЕ. Читаем HoldDuration и держим столько + 0.5 сек запаса.
+            -- Никаких ранних выходов через Triggered — точно дожидаемся полной активации.
+            local holdDuration = tonumber(prompt.HoldDuration) or 0
+            local totalHoldTime = holdDuration + 0.5
+
+            StatusLabel.Text = string.format("⏳ Держу: %s (%.1fs)", target.obj.Name, totalHoldTime)
             StatusLabel.TextColor3 = Color3.fromRGB(224, 176, 255)
 
-            -- V2.7: подписываемся на Triggered, чтоб точно знать когда бокс открылся
-            local triggered = false
-            local triggeredConn
-            pcall(function()
-                triggeredConn = prompt.Triggered:Connect(function(plr)
-                    if plr == LocalPlayer then
-                        triggered = true
-                    end
-                end)
-            end)
-
             -- Телепорт к боксу
-            hrp.CFrame = CFrame.new(target.pos + Vector3.new(0, 3, 0))
+            local boxCFrame = CFrame.new(target.pos + Vector3.new(0, 3, 0))
+            hrp.CFrame = boxCFrame
 
-            -- Анкорим тело, чтоб не упасть/уплыть пока ждём активацию
+            -- Анкорим тело, чтоб не упасть/уплыть пока удерживаем
             local wasAnchored = hrp.Anchored
             hrp.Anchored = true
 
-            -- Первая активация
-            pcall(function() fireproximityprompt(prompt) end)
+            -- Если у промпта есть MaxActivationDistance — временно увеличиваем чтоб точно сработало
+            local origMaxDist = prompt.MaxActivationDistance
+            pcall(function()
+                prompt.MaxActivationDistance = math.max(origMaxDist or 0, 50)
+            end)
 
-            -- V2.7: Ждём активацию столько сколько требует HoldDuration + запас 0.5 сек.
-            -- Каждые 0.1 сек повторно жмём (для prompt'ов которые проверяют что игрок реально "держит")
-            local waitTime = holdDuration + 0.5
-            local elapsed = 0
-            local fireInterval = 0.1
-            while elapsed < waitTime do
-                if triggered then break end
+            -- Засекаем стартовое время и удерживаем весь промежуток
+            local startTime = tick()
+            local lastFireTime = 0
+            local fireInterval = 0.05  -- спамим fire каждые 50 мс
+
+            while tick() - startTime < totalHoldTime do
                 if not _G.CupBoxFarmActive or not _G.ScriptAlive then break end
-                pcall(function() fireproximityprompt(prompt) end)
-                task.wait(fireInterval)
-                elapsed = elapsed + fireInterval
+
+                -- Каждые 50мс жмём — некоторые античиты требуют постоянного вызова
+                if tick() - lastFireTime >= fireInterval then
+                    pcall(function() fireproximityprompt(prompt) end)
+                    lastFireTime = tick()
+                end
+
+                -- Удерживаем позицию у бокса (анкор не всегда защищает от внешних сил)
+                if hrp.Parent then
+                    hrp.CFrame = boxCFrame
+                end
+
+                task.wait()  -- 1 кадр (~16мс), даём CPU отдохнуть
             end
 
-            -- Отписываемся от события
-            if triggeredConn then
-                pcall(function() triggeredConn:Disconnect() end)
-            end
+            -- Восстанавливаем MaxActivationDistance
+            pcall(function()
+                if origMaxDist then prompt.MaxActivationDistance = origMaxDist end
+            end)
 
             -- Снимаем анкор и возвращаемся обратно
             hrp.Anchored = wasAnchored
             hrp.CFrame = originalCFrame
 
-            if triggered then
-                StatusLabel.Text = "✓ Активирован: " .. target.obj.Name
-                StatusLabel.TextColor3 = Color3.fromRGB(0, 230, 118)
-                Blacklist[target.obj] = true
-            else
-                StatusLabel.Text = "✗ Не активирован: " .. target.obj.Name
-                StatusLabel.TextColor3 = Color3.fromRGB(255, 120, 120)
-                -- Не добавляем в blacklist — попробуем позже снова
-            end
+            StatusLabel.Text = string.format("✓ Удержал: %s (%.1fs)", target.obj.Name, totalHoldTime)
+            StatusLabel.TextColor3 = Color3.fromRGB(0, 230, 118)
+            -- Добавляем в blacklist чтоб не активировать повторно
+            Blacklist[target.obj] = true
         end
     end)
 
