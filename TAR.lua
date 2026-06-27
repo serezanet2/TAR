@@ -1,4 +1,4 @@
--- LocalScript (Cl44444ient)
+-- LocalScript (C121211212121lient)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -19,7 +19,6 @@ local originalEnabledStates = {}
 
 -- ====== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ======
 
--- Поиск всех промптов в корне workspace и папке Cups
 local function getAllPrompts()
     local prompts = {}
     local function searchIn(container)
@@ -50,7 +49,6 @@ local function getParentObject(prompt)
     return parent
 end
 
--- Проверка, нужно ли пропустить предмет
 local function shouldSkipItem(prompt)
     local obj = getParentObject(prompt)
     if not obj then return true end
@@ -133,14 +131,13 @@ local function activatePrompt(prompt)
     task.wait(0.1)  -- задержка перед началом удержания
 
     prompt:InputHoldBegin()
-    -- Минимальная длительность удержания 0.1 секунды
-    local holdTime = math.max(prompt.HoldDuration, 0.1)
+    -- Всегда добавляем 0.1 секунды к штатному времени
+    local holdTime = prompt.HoldDuration + 0.1
     task.wait(holdTime)
     prompt:InputHoldEnd()
     return true
 end
 
--- Отключение нежелательных промптов и запоминание исходного состояния
 local function disableUnwantedPrompts(allPrompts)
     for _, prompt in ipairs(allPrompts) do
         if originalEnabledStates[prompt] == nil then
@@ -152,7 +149,6 @@ local function disableUnwantedPrompts(allPrompts)
     end
 end
 
--- Восстановление исходного Enabled
 local function restorePromptsEnabled()
     for prompt, originalState in pairs(originalEnabledStates) do
         if prompt and prompt.Parent then
@@ -286,7 +282,6 @@ closeCorner.Parent = closeButton
 -- ====== ОБРАБОТЧИКИ ======
 toggleButton.MouseButton1Click:Connect(function()
     if not isFarming then
-        -- Запоминаем исходное состояние всех текущих промптов
         local initialPrompts = getAllPrompts()
         originalEnabledStates = {}
         for _, prompt in ipairs(initialPrompts) do
