@@ -1,9 +1,9 @@
 --[[
-	Auto Cup & Box Farm V3.3 (Reliable Backspace Drop)
-	- Универсальный поиск чаш (по мгновенному ProximityPrompt + старые Tool)
-	- Возврат на исходную точку, закрепление (Anchored) с задержкой
-	- Надёжный дроп через имитацию Backspace (VirtualInputManager)
-	- Отладочное окно с логом
+	Auto Cup & Box Farm V3.4 (No Name Dependency)
+	- Универсальный поиск: чаши (HoldDuration=0), боксы (HoldDuration>0) по ProximityPrompt
+	- Полный отказ от ключевых слов — теперь не важно, как назван объект
+	- Возврат на исходную точку, закрепление, Backspace-дроп
+	- Отладочное окно
 --]]
 
 local Players = game:GetService("Players")
@@ -18,13 +18,34 @@ local scriptAlive = true
 local targetsQueue = {}
 local blacklist = setmetatable({}, { __mode = "k" })
 
--- GUI элементы
 local gui, mainFrame, contentFrame
 local farmBtn, dropBtn, debugBtn, closeBtn
 local debugFrame, debugLabel
 
-local function getModelPos(m) return m.PrimaryPart and m.PrimaryPart.Position or m:GetPivot().Position end
-local function hasPrompt(m) for _,d in ipairs(m:GetDescendants()) do if d:IsA("ProximityPrompt") then return d end end end
+local function getModelPos(m)
+	if m:IsA("Model") then
+		if m.PrimaryPart then return m.PrimaryPart.Position end
+		for _, child in ipairs(m:GetDescendants()) do
+			if child:IsA("BasePart") then return child.Position end
+		end
+		return m:GetPivot().Position
+	elseif m:IsA("BasePart") then
+		return m.Position
+	else
+		local part = m:FindFirstChildWhichIsA("BasePart")
+		if part then return part.Position end
+		return Vector3.zero
+	end
+end
+
+local function findPrompt(obj)
+	for _, desc in ipairs(obj:GetDescendants()) do
+		if desc:IsA("ProximityPrompt") then
+			return desc
+		end
+	end
+	return nil
+end
 
 local function debugPrint(msg, color)
 	if debugLabel and debugLabel.Parent then
@@ -33,62 +54,78 @@ local function debugPrint(msg, color)
 	end
 end
 
--- Сканирование
+-- ===== Сканирование (полностью универсальное) =====
 local function scan()
 	local list = {}
+	local cupCount = 0
 	local boxCount = 0
-	local cupByPrompt = 0
-	local cupByTool = 0
+	local toolCount = 0
 
-	-- Боксы
+	-- Ищем ВСЕ объекты с ProximityPrompt
 	for _, obj in ipairs(workspace:GetDescendants()) do
-		if not (obj:IsA("Model") or obj:IsA("BasePart")) then continue end
+		-- Пропускаем то, что уже в чёрном списке
+		if blacklist[obj] then continue end
+
+		local prompt = findPrompt(obj)
+		if not prompt then continue end
+
+		-- Пропускаем supply box (может остаться в имени, но проверяем на всякий случай)
 		local name = obj.Name:lower()
-		if not name:find("box") then continue end
 		if name:find("supply") then
 			blacklist[obj] = true
 			continue
 		end
-		if blacklist[obj] then continue end
 
-		local prompt = hasPrompt(obj)
-		if prompt and not (prompt.ActionText and prompt.ActionText:find("$")) then
-			table.insert(list, {
-				type = "box",
-				obj = obj,
-				pos = getModelPos(obj),
-				prompt = prompt,
-				dur = tonumber(prompt.HoldDuration) or 0
-			})
-			boxCount = boxCount + 1
+		-- Игнорируем промпты с $ (магазины/платные)
+		local combined = (prompt.ActionText or "") .. (prompt.ObjectText or "") .. (prompt.Name or "")
+		if combined:find("$", 1, true) then
+			blacklist[obj] = true
+			continue
+		end
+
+		-- Игнорируем Tool (они обрабатываются отдельно внизу)
+		if obj:IsA("Tool") or obj:IsA("BackpackItem") then continue end
+
+		local hold = tonumber(prompt.HoldDuration)
+		if hold == nil then hold = 0 end
+
+		if hold == 0 then
+			-- Чаша (мгновенная активация)
+			-- Проверка, что это не бокс (вдруг у бокса тоже 0 — маловероятно, но перестрахуемся)
+			-- Не добавляем, если уже есть в списке
+			local duplicate = false
+			for _, t in ipairs(list) do
+				if t.obj == obj then duplicate = true; break end
+			end
+			if not duplicate then
+				table.insert(list, {
+					type = "prompt_cup",
+					obj = obj,
+					pos = getModelPos(obj),
+					prompt = prompt
+				})
+				cupCount = cupCount + 1
+			end
+		else
+			-- Бокс (требует удержания)
+			local duplicate = false
+			for _, t in ipairs(list) do
+				if t.obj == obj then duplicate = true; break end
+			end
+			if not duplicate then
+				table.insert(list, {
+					type = "box",
+					obj = obj,
+					pos = getModelPos(obj),
+					prompt = prompt,
+					dur = hold
+				})
+				boxCount = boxCount + 1
+			end
 		end
 	end
 
-	-- Чаши через универсальный ProximityPrompt (HoldDuration=0, без '$')
-	for _, obj in ipairs(workspace:GetDescendants()) do
-		if blacklist[obj] then continue end
-		local prompt = hasPrompt(obj)
-		if not prompt then continue end
-		if tonumber(prompt.HoldDuration) ~= 0 then continue end
-		if prompt.ActionText and prompt.ActionText:find("$") then continue end
-		local name = obj.Name:lower()
-		if name:find("box") then continue end
-		local alreadyInList = false
-		for _, t in ipairs(list) do
-			if t.obj == obj then alreadyInList = true break end
-		end
-		if not alreadyInList then
-			table.insert(list, {
-				type = "prompt_cup",
-				obj = obj,
-				pos = getModelPos(obj),
-				prompt = prompt
-			})
-			cupByPrompt = cupByPrompt + 1
-		end
-	end
-
-	-- Старые Tool-чаши
+	-- Дополнительно ищем старые Tool-чаши (по ключевым словам) — на случай, если остались
 	local keywords = { "cup", "genesis", "gold", "silver", "copper" }
 	for _, obj in ipairs(workspace:GetDescendants()) do
 		if blacklist[obj] then continue end
@@ -96,7 +133,7 @@ local function scan()
 		local name = obj.Name:lower()
 		local matched = false
 		for _, kw in ipairs(keywords) do
-			if name:find(kw) then matched = true break end
+			if name:find(kw) then matched = true; break end
 		end
 		if not matched then continue end
 		if obj:FindFirstChildWhichIsA("Humanoid") then continue end
@@ -107,18 +144,24 @@ local function scan()
 				obj = obj,
 				pos = handle.Position
 			})
-			cupByTool = cupByTool + 1
+			toolCount = toolCount + 1
 		end
 	end
 
-	table.sort(list, function(a,b) return a.type=="box" and b.type~="box" end)
+	-- Боксы всегда первые
+	table.sort(list, function(a, b)
+		if a.type == "box" and b.type ~= "box" then return true end
+		if a.type ~= "box" and b.type == "box" then return false end
+		return false
+	end)
+
 	targetsQueue = list
-	debugPrint(string.format("Скан: %d боксов | %d чаш(prompt) + %d чаш(tool) = всего %d",
-		boxCount, cupByPrompt, cupByTool, #list), Color3.fromRGB(200,200,255))
+	debugPrint(string.format("Скан: %d боксов | %d чаш | %d tool | Всего: %d",
+		boxCount, cupCount, toolCount, #list), Color3.fromRGB(200,200,255))
 end
 
--- Обработка одной цели
-local function process()
+-- ===== Обработка цели =====
+local function processOne()
 	if #targetsQueue == 0 then return end
 	local char = LocalPlayer.Character
 	if not char then debugPrint("Нет персонажа", Color3.fromRGB(255,150,150)); return end
@@ -131,7 +174,7 @@ local function process()
 
 	local target = table.remove(targetsQueue, 1)
 	local targetName = target.obj.Name
-	debugPrint("-> Цель: " .. targetName .. " (" .. target.type .. ")", Color3.fromRGB(255,255,200))
+	debugPrint("-> " .. targetName .. " (" .. target.type .. ")", Color3.fromRGB(255,255,200))
 
 	local ok, err = pcall(function()
 		if not target.obj or not target.obj.Parent then
@@ -144,7 +187,7 @@ local function process()
 			hrp.CFrame = CFrame.new(target.pos + Vector3.new(0,2,0))
 			task.wait(0.05)
 			hum:EquipTool(target.obj)
-			debugPrint("Подобран: " .. targetName, Color3.fromRGB(0,230,118))
+			debugPrint("Подобран tool: " .. targetName, Color3.fromRGB(0,230,118))
 		elseif target.type == "prompt_cup" then
 			hrp.CFrame = CFrame.new(target.pos + Vector3.new(0,2,0))
 			task.wait(0.05)
@@ -178,7 +221,7 @@ local function process()
 	pcall(function() if hrp.Parent then hrp.CFrame = origCFrame; if farmActive then hrp.Anchored = true end end end)
 end
 
--- Цикл дропа (Backspace)
+-- ===== Цикл дропа (Backspace) =====
 task.spawn(function()
 	while scriptAlive do
 		if farmActive and dropActive then
@@ -188,8 +231,8 @@ task.spawn(function()
 			if hrp and hrp.Anchored and hum then
 				local tools = {}
 				local bp = LocalPlayer:FindFirstChild("Backpack")
-				if bp then for _,t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then table.insert(tools,t) end end end
-				if char then for _,t in ipairs(char:GetChildren()) do if t:IsA("Tool") then table.insert(tools,t) end end end
+				if bp then for _, t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then table.insert(tools, t) end end end
+				if char then for _, t in ipairs(char:GetChildren()) do if t:IsA("Tool") then table.insert(tools, t) end end end
 				if #tools > 0 then
 					local tool = tools[math.random(#tools)]
 					if tool.Parent ~= char then
@@ -209,9 +252,9 @@ task.spawn(function()
 	end
 end)
 
--- Главные циклы
+-- ===== Главные циклы =====
 task.spawn(function() while scriptAlive do if farmActive then scan() end task.wait(5) end end)
-task.spawn(function() while scriptAlive do if farmActive then process() end task.wait(0.1) end end)
+task.spawn(function() while scriptAlive do if farmActive then processOne() end task.wait(0.1) end end)
 
 -- ===== GUI =====
 gui = Instance.new("ScreenGui", LocalPlayer:WaitForChild("PlayerGui"))
@@ -231,7 +274,7 @@ local title = Instance.new("TextLabel", mainFrame)
 title.Size = UDim2.new(0,130,0,30)
 title.Position = UDim2.new(0,5,0,0)
 title.BackgroundTransparency = 1
-title.Text = "Cup & Box Farm V3.3"
+title.Text = "No‑Name Farm V3.4"
 title.TextColor3 = Color3.fromRGB(220,220,220)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -299,7 +342,7 @@ closeBtn.Font = Enum.Font.GothamBold
 closeBtn.TextSize = 13
 Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0,6)
 
--- Окно отладки
+-- Отладка
 debugFrame = Instance.new("Frame", gui)
 debugFrame.Size = UDim2.new(0, 250, 0, 120)
 debugFrame.Position = UDim2.new(0, 330, 0, 100)
@@ -332,7 +375,7 @@ debugLabel.TextWrapped = true
 debugLabel.TextXAlignment = Enum.TextXAlignment.Left
 debugLabel.TextYAlignment = Enum.TextYAlignment.Top
 
--- Обработчики
+-- Обработчики GUI
 toggleBtn.MouseButton1Click:Connect(function()
 	contentFrame.Visible = not contentFrame.Visible
 	toggleBtn.Text = contentFrame.Visible and "-" or "+"
@@ -358,7 +401,8 @@ dropBtn.MouseButton1Click:Connect(function()
 	dropActive = not dropActive
 	dropBtn.Text = dropActive and "Drop: ON" or "Drop: OFF"
 	dropBtn.BackgroundColor3 = dropActive and Color3.fromRGB(200,150,0) or Color3.fromRGB(200,50,50)
-	debugPrint(dropActive and "Дроп включен" or "Дроп выключен", dropActive and Color3.fromRGB(255,180,100) or Color3.fromRGB(200,200,200))
+	debugPrint(dropActive and "Дроп включен" or "Дроп выключен",
+		dropActive and Color3.fromRGB(255,180,100) or Color3.fromRGB(200,200,200))
 end)
 
 debugBtn.MouseButton1Click:Connect(function()
@@ -376,4 +420,4 @@ closeBtn.MouseButton1Click:Connect(function()
 	gui:Destroy()
 end)
 
-debugPrint("V3.3 – Надёжный Backspace-дроп", Color3.fromRGB(150,150,150))
+debugPrint("V3.4 – Ищем всё по промптам", Color3.fromRGB(150,150,150))
