@@ -3,6 +3,8 @@
 --  * Холостой дроп через Backspace: вместо прямого перемещения в Workspace эмулируется нажатие Backspace
 --  * Используется VirtualInputManager для отправки клавиши
 --  * Предмет сначала экипируется, затем выбрасывается игрой
+--  * ВЫБРОШЕННЫЙ ПРЕДМЕТ ДОБАВЛЯЕТСЯ В BLACKLIST (игнорируется при сканировании)
+--  * Предмет НЕ добавляется в очередь сбора – исключает бесконечный цикл
 --  * При появлении внешних целей дроп прекращается
 -- Изменения V3.3:
 --  * УБРАН дроп предметов (не выбрасываем собранное)
@@ -306,7 +308,7 @@ local function scanWorkspace()
     for _, obj in pairs(workspace:GetDescendants()) do
         if obj:IsA("Tool") or obj:IsA("BackpackItem") then
             if matchesKeyword(obj.Name) then
-                if Blacklist[obj] then continue end
+                if Blacklist[obj] then continue end   -- ИГНОРИРУЕМ ВЫБРОШЕННЫЕ И ЗАНЕСЁННЫЕ В BLACKLIST
                 if isInPlayerInventory(obj) then Blacklist[obj] = true; continue end
                 if isInsideOtherPlayer(obj) then Blacklist[obj] = true; continue end
                 if isAnchored(obj) then Blacklist[obj] = true; continue end
@@ -506,15 +508,15 @@ local function idleDrop()
     local backpack = LocalPlayer:FindFirstChild("Backpack")
     if not backpack then return end
 
-    -- Собираем все подходящие Tool из инвентаря
+    -- Собираем все подходящие Tool из инвентаря, которых ЕЩЁ НЕТ в Blacklist
     local toolList = {}
     for _, obj in pairs(backpack:GetChildren()) do
-        if obj:IsA("Tool") and matchesKeyword(obj.Name) then
+        if obj:IsA("Tool") and matchesKeyword(obj.Name) and not Blacklist[obj] then
             table.insert(toolList, obj)
         end
     end
     for _, obj in pairs(character:GetChildren()) do
-        if obj:IsA("Tool") and matchesKeyword(obj.Name) then
+        if obj:IsA("Tool") and matchesKeyword(obj.Name) and not Blacklist[obj] then
             table.insert(toolList, obj)
         end
     end
@@ -540,13 +542,11 @@ local function idleDrop()
     -- После нажатия предмет должен оказаться в workspace; если нет — игнорируем
     if tool.Parent ~= workspace then return end
 
-    -- Убираем из чёрного списка и сразу добавляем в очередь сбора
-    Blacklist[tool] = nil
-    table.insert(TargetsQueue, {
-        type = "tool",
-        obj = tool,
-        handle = handle,
-    })
+    -- ВАЖНО: Добавляем выброшенный инструмент в Blacklist, чтобы скрипт его больше не подбирал
+    Blacklist[tool] = true
+
+    StatusLabel.Text = "Выбросил: " .. tool.Name .. " (игнорирую)"
+    StatusLabel.TextColor3 = Color3.fromRGB(255, 200, 80)
 end
 
 -- =====================================================================
@@ -712,7 +712,7 @@ task.spawn(function()
                 if #TargetsQueue > 0 then
                     pcall(processQueue)
                 else
-                    -- V3.4: Если целей нет, выбрасываем предмет нажатием Backspace и сразу ставим в очередь
+                    -- V3.4: Если целей нет, выбрасываем случайный предмет (и сразу игнорируем его)
                     pcall(idleDrop)
                 end
             end
