@@ -1,4 +1,4 @@
--- LocalScript (Cli6767676767676767676ent)
+-- LocalScript (Cli12412414141242142141242114241214242114ent)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -11,6 +11,9 @@ local currentHighlights = {}
 local farmCoroutine = nil
 local stopRequested = false
 
+-- Разрешённые ключевые слова (нижний регистр)
+local ALLOWED_WORDS = {"box", "cup", "genesis", "silver", "gold", "copper"}
+
 -- ====== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ======
 
 -- Поиск промптов только в корне workspace и в папке Cups
@@ -20,21 +23,17 @@ local function getAllPrompts()
     local function searchIn(container)
         if not container then return end
         for _, child in ipairs(container:GetChildren()) do
-            -- Игнорируем персонажей игроков
             if not Players:GetPlayerFromCharacter(child) then
                 if child:IsA("ProximityPrompt") then
                     table.insert(prompts, child)
                 else
-                    -- Рекурсивно заходим внутрь, но не дальше дочерних объектов
-                    searchIn(child)
+                    searchIn(child)  -- рекурсивно внутрь объектов
                 end
             end
         end
     end
 
-    -- Сканируем корень workspace
     searchIn(workspace)
-    -- Сканируем папку Cups, если она есть
     local cups = workspace:FindFirstChild("Cups")
     if cups then
         searchIn(cups)
@@ -51,11 +50,28 @@ local function getParentObject(prompt)
     return parent
 end
 
+-- Проверка, нужно ли пропустить предмет:
+-- 1. Всегда пропускаем Blood / Garlic / Oil
+-- 2. Разрешаем только те, у которых в имени есть одно из ALLOWED_WORDS
 local function shouldSkipItem(prompt)
     local obj = getParentObject(prompt)
-    if not obj then return false end
+    if not obj then return true end
     local lowerName = obj.Name:lower()
-    return lowerName:find("blood") or lowerName:find("garlic") or lowerName:find("oil")
+
+    -- Мусор исключаем сразу
+    if lowerName:find("blood") or lowerName:find("garlic") or lowerName:find("oil") then
+        return true
+    end
+
+    -- Проверяем, есть ли хотя бы одно разрешённое слово
+    for _, word in ipairs(ALLOWED_WORDS) do
+        if lowerName:find(word) then
+            return false  -- Не пропускаем, это нужный предмет
+        end
+    end
+
+    -- Не найдено ни одного разрешённого слова – пропускаем
+    return true
 end
 
 local function isBox(prompt)
@@ -128,13 +144,12 @@ local function activatePrompt(prompt)
     return true
 end
 
--- ====== ОСНОВНОЙ ЦИКЛ (динамический поиск) ======
+-- ====== ОСНОВНОЙ ЦИКЛ ======
 
 local function farmCycle()
     while isFarming and not stopRequested do
         rootPart.Anchored = false
 
-        -- Каждый раз заново сканируем (предметы появляются/исчезают)
         local allPrompts = getAllPrompts()
         local prompts = {}
         for _, prompt in ipairs(allPrompts) do
@@ -170,7 +185,6 @@ local function farmCycle()
             rootPart.Anchored = true
         end
 
-        -- Пауза между проходами
         local elapsed = 0
         while elapsed < 5 and isFarming and not stopRequested do
             task.wait(1)
