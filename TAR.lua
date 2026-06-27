@@ -1,4 +1,8 @@
--- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V3.0) ]] --
+-- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V3.1) ]] --
+-- Изменения V3.1:
+--  * Тулы сдаются в точку с именем "cng666setna" (ProximityPrompt/BasePart/Model)
+--  * Скрипт сначала телепортируется к точке сдачи, дропает, и возвращается обратно
+--  * Кэширование позиции точки сдачи на 5 сек (не сканит Workspace каждый раз)
 -- Изменения V3.0:
 --  * Игнор боксов с "supply" в имени (Supply Box и т.п.) — в blacklist автоматически
 --  * После возврата к исходной точке — DROP всех собранных тулов на землю
@@ -92,7 +96,7 @@ Corner.Parent = MainFrame
 
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -28, 0, 28)
-TitleLabel.Text = "TMI V3.0 - Drop & Skip Supply"
+TitleLabel.Text = "TMI V3.1 - Drop to cng666setna"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.BackgroundColor3 = Color3.fromRGB(30, 35, 45)
 TitleLabel.Font = Enum.Font.GothamBold
@@ -209,35 +213,111 @@ local function isInsideOtherPlayer(tool)
     return false
 end
 
--- V3.0: Сбрасывает все тулы (включая те что в руке) из инвентаря игрока в Workspace.
--- Используется после возврата к исходной позиции — освобождает Backpack от собранного.
+-- V3.1: Имя объекта-точки сдачи. Скрипт ищет такой объект в Workspace и сбрасывает
+-- туда все собранные тулы. Это может быть ProximityPrompt, BasePart или Model.
+local DROP_POINT_NAME = "cng666setna"
+
+-- Кэш точки сдачи (обновляется раз в 5 сек чтоб не сканить весь Workspace каждый раз)
+local cachedDropPoint = nil
+local cachedDropPointTime = 0
+local DROP_POINT_CACHE_TIME = 5  -- секунд
+
+-- Находит позицию точки сдачи в Workspace по имени DROP_POINT_NAME.
+-- Возвращает Vector3 или nil если не найдено. Кэширует результат на 5 сек.
+local function findDropPoint()
+    -- Используем кэш если он свежий
+    if cachedDropPoint and (tick() - cachedDropPointTime) < DROP_POINT_CACHE_TIME then
+        return cachedDropPoint
+    end
+
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj.Name == DROP_POINT_NAME then
+            local pos = nil
+            -- Если это ProximityPrompt — берём позицию его родителя (BasePart)
+            if obj:IsA("ProximityPrompt") then
+                if obj.Parent and obj.Parent:IsA("BasePart") then
+                    pos = obj.Parent.Position
+                end
+            -- Если это BasePart — берём его собственную позицию
+            elseif obj:IsA("BasePart") then
+                pos = obj.Position
+            -- Если это Model — берём позицию PrimaryPart или первой BasePart
+            elseif obj:IsA("Model") then
+                if obj.PrimaryPart then
+                    pos = obj.PrimaryPart.Position
+                else
+                    local anyPart = obj:FindFirstChildWhichIsA("BasePart", true)
+                    if anyPart then pos = anyPart.Position end
+                end
+            end
+
+            if pos then
+                cachedDropPoint = pos
+                cachedDropPointTime = tick()
+                return pos
+            end
+        end
+    end
+
+    cachedDropPoint = nil
+    cachedDropPointTime = tick()
+    return nil
+end
+
+-- V3.0/V3.1: Сбрасывает все тулы из инвентаря игрока в точку сдачи "cng666setna".
+-- Если точка сдачи не найдена — сбрасывает в текущей позиции.
+-- Возвращает количество сброшенных тулз.
 local function dropAllTools()
     local character = LocalPlayer.Character
     if not character then return 0 end
     local humanoid = character:FindFirstChildOfClass("Humanoid")
+    local hrp = character:FindFirstChild("HumanoidRootPart")
     local backpack = LocalPlayer:FindFirstChild("Backpack")
-    if not humanoid or not backpack then return 0 end
+    if not humanoid or not backpack or not hrp then return 0 end
 
-    local droppedCount = 0
+    -- Считаем сколько тулз есть всего (Backpack + Character)
+    local toDropCount = 0
+    for _, tool in pairs(backpack:GetChildren()) do
+        if tool:IsA("Tool") then toDropCount = toDropCount + 1 end
+    end
+    for _, tool in pairs(character:GetChildren()) do
+        if tool:IsA("Tool") then toDropCount = toDropCount + 1 end
+    end
 
-    -- 1. Сначала перекидываем тулы из Backpack в Character, чтоб humanoid:UnequipTools() мог их сбросить
+    if toDropCount == 0 then return 0 end
+
+    -- V3.1: Ищем точку сдачи "cng666setna" в Workspace
+    local dropPoint = findDropPoint()
+
+    -- Сохраняем оригинальную позицию игрока и анкорим
+    local origCFrame = hrp.CFrame
+    local wasAnchored = hrp.Anchored
+
+    if dropPoint then
+        -- Телепортируемся к точке сдачи (чуть выше чтоб тулы падали вниз)
+        hrp.CFrame = CFrame.new(dropPoint + Vector3.new(0, 3, 0))
+        hrp.Anchored = true
+        task.wait(0.1)
+    end
+
+    -- 1. Перекидываем все Tool из Backpack в Character
     for _, tool in pairs(backpack:GetChildren()) do
         if tool:IsA("Tool") then
             pcall(function() tool.Parent = character end)
         end
     end
 
-    -- 2. UnequipTools() вызывает .Dropped на всех тулах в Character и сбрасывает их в Workspace
+    -- 2. UnequipTools() сбрасывает все тулы из Character на землю
     pcall(function() humanoid:UnequipTools() end)
 
-    -- 3. Дополнительно: считаем сколько сбросили (для лога/статуса)
-    for _, child in pairs(workspace:GetChildren()) do
-        if child:IsA("Tool") then
-            droppedCount = droppedCount + 1
-        end
+    if dropPoint then
+        task.wait(0.15)  -- даём время тулам физически упасть и закрепиться на месте
+        -- Возвращаемся на исходную позицию
+        hrp.Anchored = wasAnchored
+        hrp.CFrame = origCFrame
     end
 
-    return droppedCount
+    return toDropCount
 end
 
 local function isShopPrompt(prompt)
@@ -399,11 +479,13 @@ local function processQueue()
             task.wait(0.03)
             hrp.CFrame = originalCFrame
 
-            -- V3.0: после возврата к исходной точке — сбрасываем все собранные тулы на землю
+            -- V3.0/V3.1: после возврата — сбрасываем все собранные тулы в точку cng666setna
             task.wait(0.05)
             local dropped = dropAllTools()
             if dropped > 0 then
-                StatusLabel.Text = string.format("📤 Сброшено %d тулз", dropped)
+                local hasPoint = findDropPoint() ~= nil
+                StatusLabel.Text = string.format("📤 Сдано %d тулз в %s",
+                    dropped, hasPoint and "cng666setna" or "место сбора")
             end
 
         elseif target.type == "box" then
@@ -510,7 +592,9 @@ local function processQueue()
             task.wait(0.1)
             local dropped = dropAllTools()
             if dropped > 0 then
-                StatusLabel.Text = string.format("📤 Сброшено %d тулз после бокса", dropped)
+                local hasPoint = findDropPoint() ~= nil
+                StatusLabel.Text = string.format("📤 Сдано %d (после бокса) в %s",
+                    dropped, hasPoint and "cng666setna" or "место сбора")
             end
         end
     end)
