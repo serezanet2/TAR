@@ -1,4 +1,8 @@
--- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V3.3) ]] --
+-- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V3.4) ]] --
+-- Изменения V3.4:
+--  * Холостой дроп: когда нет целей, берёт случайный предмет из инвентаря и выбрасывает каждые 0.1с
+--  * Выброшенный предмет сразу попадает в очередь, не давая выкинуть несколько за раз
+--  * При появлении целей дроп останавливается — скрипт собирает новые чаши/слитки
 -- Изменения V3.3:
 --  * УБРАН дроп предметов (не выбрасываем собранное)
 --  * УБРАНО закрепление HRP (нет Anchored = true)
@@ -99,7 +103,7 @@ Corner.Parent = MainFrame
 
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -28, 0, 28)
-TitleLabel.Text = "TMI V3.3 - NoDrop NoAnchor"
+TitleLabel.Text = "TMI V3.4 - Idle Drop"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.BackgroundColor3 = Color3.fromRGB(30, 35, 45)
 TitleLabel.Font = Enum.Font.GothamBold
@@ -329,7 +333,6 @@ end
 local processingBusy = false
 
 -- ===== БЫСТРЫЙ ПОДБОР (раз в PICKUP_INTERVAL=0.1 сек) =====
--- V3.3: НЕТ дропа, НЕТ анкора. Только: CFrame → телепорт → подбор → возврат CFrame.
 local function processQueue()
     if processingBusy then return end
     if #TargetsQueue == 0 then return end
@@ -383,7 +386,6 @@ local function processQueue()
             task.wait(0.03)
 
             -- ВОЗВРАТ НА СОХРАНЁННЫЙ CFrame (позиция + поворот)
-            -- V3.3: БЕЗ анкора, БЕЗ дропа — просто возврат
             hrp.CFrame = originalCFrame
             task.wait(0.05)
 
@@ -469,7 +471,7 @@ local function processQueue()
                 if origLineOfSight ~= nil then prompt.RequiresLineOfSight = origLineOfSight end
             end)
 
-            -- V3.3: ВОЗВРАТ НА СОХРАНЁННЫЙ CFrame (БЕЗ анкора, БЕЗ дропа)
+            -- ВОЗВРАТ НА СОХРАНЁННЫЙ CFrame
             hrp.CFrame = originalCFrame
 
             if triggered then
@@ -489,8 +491,49 @@ local function processQueue()
     processingBusy = false
 
     if not ok then
-        warn("[TMI V3.3] processQueue error: " .. tostring(err))
+        warn("[TMI V3.4] processQueue error: " .. tostring(err))
     end
+end
+
+-- ===== V3.4: ХОЛОСТОЙ ДРОП (когда нет целей) =====
+local function idleDrop()
+    local character = LocalPlayer.Character
+    if not character then return end
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if not backpack then return end
+
+    -- Собираем все подходящие Tool из инвентаря
+    local toolList = {}
+    for _, obj in pairs(backpack:GetChildren()) do
+        if obj:IsA("Tool") and matchesKeyword(obj.Name) then
+            table.insert(toolList, obj)
+        end
+    end
+    for _, obj in pairs(character:GetChildren()) do
+        if obj:IsA("Tool") and matchesKeyword(obj.Name) then
+            table.insert(toolList, obj)
+        end
+    end
+
+    if #toolList == 0 then return end
+
+    local tool = toolList[math.random(#toolList)]
+    -- Выбрасываем предмет в мир
+    tool.Parent = workspace
+    -- Убираем из чёрного списка, чтобы скрипт мог снова его подобрать
+    Blacklist[tool] = nil
+    -- Сразу добавляем в очередь, чтобы не выкинуть несколько подряд
+    local handle = tool:FindFirstChild("Handle") or tool:FindFirstChildWhichIsA("BasePart")
+    if handle then
+        table.insert(TargetsQueue, {
+            type = "tool",
+            obj = tool,
+            handle = handle,
+        })
+    end
+    task.wait(0.02)
 end
 
 -- =====================================================================
@@ -648,11 +691,18 @@ task.spawn(function()
     end
 end)
 
--- ===== ЦИКЛ ПОДБОРА (каждые PICKUP_INTERVAL сек) =====
+-- ===== ЦИКЛ ПОДБОРА + ХОЛОСТОГО ДРОПА (каждые PICKUP_INTERVAL сек) =====
 task.spawn(function()
     while _G.ScriptAlive do
         if _G.CupBoxFarmActive then
-            pcall(processQueue)
+            if not processingBusy then
+                if #TargetsQueue > 0 then
+                    pcall(processQueue)
+                else
+                    -- V3.4: Если целей нет, выбрасываем случайный предмет и сразу добавляем в очередь
+                    pcall(idleDrop)
+                end
+            end
         end
         task.wait(PICKUP_INTERVAL)
     end
