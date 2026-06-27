@@ -1,9 +1,9 @@
 --[[
-	Auto Cup & Box Farm V3.4 (No Name Dependency)
-	- Универсальный поиск: чаши (HoldDuration=0), боксы (HoldDuration>0) по ProximityPrompt
-	- Полный отказ от ключевых слов — теперь не важно, как назван объект
-	- Возврат на исходную точку, закрепление, Backspace-дроп
-	- Отладочное окно
+	Auto Cup & Box Farm V3.5 (Correct Box Detection)
+	- Боксы: объекты, у которых в имени (или имени родителя) есть "box" (не "supply")
+	- Чаши: всё остальное с HoldDuration = 0
+	- Рекурсивный поиск ProximityPrompt внутри любой вложенности
+	- Возврат на точку, закрепление, Backspace-дроп, отладка
 --]]
 
 local Players = game:GetService("Players")
@@ -54,45 +54,76 @@ local function debugPrint(msg, color)
 	end
 end
 
--- ===== Сканирование (полностью универсальное) =====
+-- Проверяет, есть ли "box" в имени объекта или любого его родителя (вверх по иерархии)
+local function hasBoxInHierarchy(obj)
+	local current = obj
+	while current and current ~= workspace do
+		if string.find(string.lower(current.Name), "box") then
+			-- Исключаем supply
+			if not string.find(string.lower(current.Name), "supply") then
+				return true
+			end
+		end
+		current = current.Parent
+	end
+	return false
+end
+
+-- ===== Сканирование =====
 local function scan()
 	local list = {}
 	local cupCount = 0
 	local boxCount = 0
 	local toolCount = 0
 
-	-- Ищем ВСЕ объекты с ProximityPrompt
+	-- 1. Боксы (сначала ищем их, чтобы потом не спутать с чашами)
 	for _, obj in ipairs(workspace:GetDescendants()) do
-		-- Пропускаем то, что уже в чёрном списке
 		if blacklist[obj] then continue end
 
 		local prompt = findPrompt(obj)
 		if not prompt then continue end
 
-		-- Пропускаем supply box (может остаться в имени, но проверяем на всякий случай)
-		local name = obj.Name:lower()
-		if name:find("supply") then
-			blacklist[obj] = true
-			continue
-		end
-
-		-- Игнорируем промпты с $ (магазины/платные)
+		-- Проверяем на $
 		local combined = (prompt.ActionText or "") .. (prompt.ObjectText or "") .. (prompt.Name or "")
 		if combined:find("$", 1, true) then
 			blacklist[obj] = true
 			continue
 		end
 
-		-- Игнорируем Tool (они обрабатываются отдельно внизу)
-		if obj:IsA("Tool") or obj:IsA("BackpackItem") then continue end
+		-- Это бокс, только если в иерархии есть "box" и HoldDuration > 0
+		if hasBoxInHierarchy(obj) then
+			local hold = tonumber(prompt.HoldDuration)
+			if hold and hold > 0 then
+				table.insert(list, {
+					type = "box",
+					obj = obj,
+					pos = getModelPos(obj),
+					prompt = prompt,
+					dur = hold
+				})
+				boxCount = boxCount + 1
+				blacklist[obj] = true  -- чтобы не попало в чаши
+				continue
+			end
+		end
+	end
+
+	-- 2. Чаши (любой объект с HoldDuration == 0, не попавший в боксы)
+	for _, obj in ipairs(workspace:GetDescendants()) do
+		if blacklist[obj] then continue end
+
+		local prompt = findPrompt(obj)
+		if not prompt then continue end
+
+		local combined = (prompt.ActionText or "") .. (prompt.ObjectText or "") .. (prompt.Name or "")
+		if combined:find("$", 1, true) then
+			blacklist[obj] = true
+			continue
+		end
 
 		local hold = tonumber(prompt.HoldDuration)
-		if hold == nil then hold = 0 end
-
 		if hold == 0 then
-			-- Чаша (мгновенная активация)
-			-- Проверка, что это не бокс (вдруг у бокса тоже 0 — маловероятно, но перестрахуемся)
-			-- Не добавляем, если уже есть в списке
+			-- Не добавляем, если уже в списке (на всякий случай)
 			local duplicate = false
 			for _, t in ipairs(list) do
 				if t.obj == obj then duplicate = true; break end
@@ -106,26 +137,10 @@ local function scan()
 				})
 				cupCount = cupCount + 1
 			end
-		else
-			-- Бокс (требует удержания)
-			local duplicate = false
-			for _, t in ipairs(list) do
-				if t.obj == obj then duplicate = true; break end
-			end
-			if not duplicate then
-				table.insert(list, {
-					type = "box",
-					obj = obj,
-					pos = getModelPos(obj),
-					prompt = prompt,
-					dur = hold
-				})
-				boxCount = boxCount + 1
-			end
 		end
 	end
 
-	-- Дополнительно ищем старые Tool-чаши (по ключевым словам) — на случай, если остались
+	-- 3. Старые Tool-чаши (по ключевым словам) — без промпта
 	local keywords = { "cup", "genesis", "gold", "silver", "copper" }
 	for _, obj in ipairs(workspace:GetDescendants()) do
 		if blacklist[obj] then continue end
@@ -148,7 +163,7 @@ local function scan()
 		end
 	end
 
-	-- Боксы всегда первые
+	-- Боксы первые
 	table.sort(list, function(a, b)
 		if a.type == "box" and b.type ~= "box" then return true end
 		if a.type ~= "box" and b.type == "box" then return false end
@@ -256,7 +271,7 @@ end)
 task.spawn(function() while scriptAlive do if farmActive then scan() end task.wait(5) end end)
 task.spawn(function() while scriptAlive do if farmActive then processOne() end task.wait(0.1) end end)
 
--- ===== GUI =====
+-- ===== GUI (без изменений) =====
 gui = Instance.new("ScreenGui", LocalPlayer:WaitForChild("PlayerGui"))
 gui.Name = "FarmGUI"
 gui.ResetOnSpawn = false
@@ -274,7 +289,7 @@ local title = Instance.new("TextLabel", mainFrame)
 title.Size = UDim2.new(0,130,0,30)
 title.Position = UDim2.new(0,5,0,0)
 title.BackgroundTransparency = 1
-title.Text = "No‑Name Farm V3.4"
+title.Text = "Box/Cup Farm V3.5"
 title.TextColor3 = Color3.fromRGB(220,220,220)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -342,7 +357,6 @@ closeBtn.Font = Enum.Font.GothamBold
 closeBtn.TextSize = 13
 Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0,6)
 
--- Отладка
 debugFrame = Instance.new("Frame", gui)
 debugFrame.Size = UDim2.new(0, 250, 0, 120)
 debugFrame.Position = UDim2.new(0, 330, 0, 100)
@@ -420,4 +434,4 @@ closeBtn.MouseButton1Click:Connect(function()
 	gui:Destroy()
 end)
 
-debugPrint("V3.4 – Ищем всё по промптам", Color3.fromRGB(150,150,150))
+debugPrint("V3.5 – Бокс только по имени 'box' в иерархии", Color3.fromRGB(150,150,150))
