@@ -1,9 +1,8 @@
 --[[
-    Auto Cup & Box Farm V2.4 (исправленный)
-    - Очередь накапливается, дубли не добавляются.
-    - Одно сканирование Workspace за раз (экономия ресурсов).
-    - Возврат на место с Anchored после задержки 0.15 с.
-    - Auto Drop только когда привязан.
+    Auto Cup & Box Farm V2.5 (фикс поиска)
+    - Ищет цели в workspace.Cups (если папка есть), иначе по всему workspace.
+    - Очередь накапливается, дубли исключаются.
+    - Одно сканирование за раз.
 --]]
 
 local Players = game:GetService("Players")
@@ -12,23 +11,18 @@ local UIS = game:GetService("UserInputService")
 local VIM = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 
--- Состояния
 local farmActive = false
 local autoDropActive = false
 local scriptAlive = true
 
--- Очередь целей и множество для быстрого поиска дубликатов
 local targetsQueue = {}
-local targetObjectsSet = {}  -- key = object reference, value = true
+local targetObjectsSet = {}
 
--- Чёрные списки (слабые ключи, чтобы не утекала память)
 local Blacklist = setmetatable({}, { __mode = "k" })
 local PermanentBlacklist = setmetatable({}, { __mode = "k" })
 
--- Ключевые слова инструментов
 local TOOL_KEYWORDS = { "cup", "genesis", "gold", "silver", "copper" }
 
--- Вспомогательные функции
 local function matchesKeyword(name)
     local lower = string.lower(name)
     for _, kw in ipairs(TOOL_KEYWORDS) do
@@ -76,7 +70,6 @@ local function getModelPosition(model)
     return model:GetPivot().Position
 end
 
--- Очистка очереди от мёртвых ссылок (перед сканированием)
 local function cleanQueue()
     for i = #targetsQueue, 1, -1 do
         local target = targetsQueue[i]
@@ -89,16 +82,20 @@ local function cleanQueue()
     end
 end
 
--- Сканирование workspace (один проход)
+-- Главное изменение: ищем в workspace.Cups, если доступен
 local function scanWorkspace()
-    -- Сначала удаляем из очереди уже несуществующие объекты
     cleanQueue()
 
     local newBoxes = {}
     local newTools = {}
 
-    for _, obj in pairs(workspace:GetDescendants()) do
-        -- Боксы (Model или BasePart с именем "box")
+    -- Пробуем найти папку Cups, иначе сканируем весь workspace
+    local root = workspace:FindFirstChild("Cups")
+    if not root then
+        root = workspace
+    end
+
+    for _, obj in pairs(root:GetDescendants()) do
         if (obj:IsA("Model") or obj:IsA("BasePart")) then
             local name = string.lower(obj.Name)
             if name:find("box") then
@@ -107,7 +104,6 @@ local function scanWorkspace()
                     PermanentBlacklist[obj] = true
                 else
                     if not Blacklist[obj] and not PermanentBlacklist[obj] then
-                        -- Ищем ProximityPrompt
                         local prompt = nil
                         for _, d in pairs(obj:GetDescendants()) do
                             if d:IsA("ProximityPrompt") then
@@ -127,7 +123,6 @@ local function scanWorkspace()
                                 })
                             end
                         else
-                            -- Если есть $ или нет промта – чёрный список навсегда
                             Blacklist[obj] = true
                             PermanentBlacklist[obj] = true
                         end
@@ -136,7 +131,6 @@ local function scanWorkspace()
             end
         end
 
-        -- Инструменты (Tool или BackpackItem)
         if (obj:IsA("Tool") or obj:IsA("BackpackItem")) then
             if not matchesKeyword(obj.Name) then continue end
             if Blacklist[obj] or PermanentBlacklist[obj] then continue end
@@ -163,12 +157,10 @@ local function scanWorkspace()
         end
     end
 
-    -- Объединяем: сначала боксы, потом инструменты
     local newTargets = {}
     for _, t in ipairs(newBoxes) do table.insert(newTargets, t) end
     for _, t in ipairs(newTools) do table.insert(newTargets, t) end
 
-    -- Добавляем в общую очередь, если ещё нет и не в чёрном списке
     for _, target in ipairs(newTargets) do
         if not targetObjectsSet[target.obj] and not Blacklist[target.obj] and not PermanentBlacklist[target.obj] then
             table.insert(targetsQueue, target)
@@ -177,7 +169,6 @@ local function scanWorkspace()
     end
 end
 
--- Выброс случайного предмета
 local function dropRandomItem()
     local character = LocalPlayer.Character
     if not character then return end
@@ -202,7 +193,6 @@ local function dropRandomItem()
         task.wait(0.1)
     end
 
-    -- Имитация Backspace
     pcall(function()
         VIM:SendKeyEvent(true, Enum.KeyCode.Backspace, false, nil)
         task.wait(0.1)
@@ -210,7 +200,6 @@ local function dropRandomItem()
     end)
 end
 
--- Цикл авто-дропа (пока персонаж закреплён)
 task.spawn(function()
     while scriptAlive do
         if farmActive and autoDropActive then
@@ -225,7 +214,6 @@ task.spawn(function()
     end
 end)
 
--- Обработка одной цели
 local busy = false
 
 local function processOneTarget()
@@ -247,7 +235,7 @@ local function processOneTarget()
     local originalCFrame = hrp.CFrame
     local target = table.remove(targetsQueue, 1)
     if target and target.obj then
-        targetObjectsSet[target.obj] = nil  -- убираем из множества
+        targetObjectsSet[target.obj] = nil
     end
 
     local ok, err = pcall(function()
@@ -313,12 +301,11 @@ local function processOneTarget()
         end
     end)
 
-    -- Возврат и закрепление (с задержкой для синхронизации)
     pcall(function()
         if hrp and hrp.Parent then
             hrp.CFrame = originalCFrame
             if farmActive then
-                task.wait(0.15)        -- Даём серверу зафиксировать позицию
+                task.wait(0.15)
                 hrp.Anchored = true
             end
         end
@@ -331,7 +318,6 @@ local function processOneTarget()
     busy = false
 end
 
--- Главные циклы
 task.spawn(function()
     while scriptAlive do
         if farmActive then
@@ -351,7 +337,7 @@ task.spawn(function()
 end)
 
 -- ========================
--- GUI (без изменений)
+-- GUI
 -- ========================
 local gui = Instance.new("ScreenGui")
 gui.Name = "CupBoxFarmGUI"
@@ -375,7 +361,7 @@ local titleLabel = Instance.new("TextLabel")
 titleLabel.Size = UDim2.new(0, 120, 0, 30)
 titleLabel.Position = UDim2.new(0, 5, 0, 0)
 titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "Cup & Box Farm V2.4"
+titleLabel.Text = "Cup & Box Farm V2.5"
 titleLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
 titleLabel.Font = Enum.Font.GothamBold
 titleLabel.TextSize = 14
