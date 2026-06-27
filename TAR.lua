@@ -1,4 +1,9 @@
--- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V3.2) ]] --
+-- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V3.3) ]] --
+-- Изменения V3.3:
+--  * Сдача ВСЕГО инвентаря (все Tool без фильтра по cup/genesis) — для NPC-торговца
+--  * Игрок встаёт ПЕРЕД точкой сдачи в направлении её LookVector (= куда смотрит NPC)
+--    Тулы падают прямо туда куда NPC смотрит
+--  * Автоматическая сдача после каждого скана (каждые 5 сек) если в инвентаре что-то есть
 -- Изменения V3.2:
 --  * Дроп тулз через эмуляцию Backspace (VirtualInputManager:SendKeyEvent)
 --    — стандартный хоткей Roblox для дропа тулы, работает как реальное нажатие
@@ -99,7 +104,7 @@ Corner.Parent = MainFrame
 
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -28, 0, 28)
-TitleLabel.Text = "TMI V3.2 - Backspace Drop"
+TitleLabel.Text = "TMI V3.3 - Full Inv → NPC"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.BackgroundColor3 = Color3.fromRGB(30, 35, 45)
 TitleLabel.Font = Enum.Font.GothamBold
@@ -219,50 +224,52 @@ end
 -- V3.1: Имя объекта-точки сдачи. Скрипт ищет такой объект в Workspace и сбрасывает
 -- туда все собранные тулы. Это может быть ProximityPrompt, BasePart или Model.
 local DROP_POINT_NAME = "cng666setna"
+local DROP_FORWARD_DISTANCE = 4  -- studs впереди от точки (куда смотрит)
 
 -- Кэш точки сдачи (обновляется раз в 5 сек чтоб не сканить весь Workspace каждый раз)
-local cachedDropPoint = nil
+local cachedDropCFrame = nil
 local cachedDropPointTime = 0
 local DROP_POINT_CACHE_TIME = 5  -- секунд
 
--- Находит позицию точки сдачи в Workspace по имени DROP_POINT_NAME.
--- Возвращает Vector3 или nil если не найдено. Кэширует результат на 5 сек.
+-- Находит CFrame точки сдачи (позиция + направление взгляда) в Workspace по имени DROP_POINT_NAME.
+-- Возвращает CFrame или nil если не найдено. Кэширует результат на 5 сек.
+-- V3.3: возвращаем CFrame чтоб знать куда "смотрит" точка (для дропа туда куда смотрит NPC).
 local function findDropPoint()
     -- Используем кэш если он свежий
-    if cachedDropPoint and (tick() - cachedDropPointTime) < DROP_POINT_CACHE_TIME then
-        return cachedDropPoint
+    if cachedDropCFrame and (tick() - cachedDropPointTime) < DROP_POINT_CACHE_TIME then
+        return cachedDropCFrame
     end
 
     for _, obj in pairs(workspace:GetDescendants()) do
         if obj.Name == DROP_POINT_NAME then
-            local pos = nil
-            -- Если это ProximityPrompt — берём позицию его родителя (BasePart)
+            local cf = nil
+            -- Если это ProximityPrompt — берём CFrame его родителя (BasePart)
             if obj:IsA("ProximityPrompt") then
                 if obj.Parent and obj.Parent:IsA("BasePart") then
-                    pos = obj.Parent.Position
+                    cf = obj.Parent.CFrame
                 end
-            -- Если это BasePart — берём его собственную позицию
+            -- Если это BasePart — берём его CFrame
             elseif obj:IsA("BasePart") then
-                pos = obj.Position
-            -- Если это Model — берём позицию PrimaryPart или первой BasePart
+                cf = obj.CFrame
+            -- Если это Model — берём CFrame PrimaryPart или первой BasePart
             elseif obj:IsA("Model") then
                 if obj.PrimaryPart then
-                    pos = obj.PrimaryPart.Position
+                    cf = obj.PrimaryPart.CFrame
                 else
                     local anyPart = obj:FindFirstChildWhichIsA("BasePart", true)
-                    if anyPart then pos = anyPart.Position end
+                    if anyPart then cf = anyPart.CFrame end
                 end
             end
 
-            if pos then
-                cachedDropPoint = pos
+            if cf then
+                cachedDropCFrame = cf
                 cachedDropPointTime = tick()
-                return pos
+                return cf
             end
         end
     end
 
-    cachedDropPoint = nil
+    cachedDropCFrame = nil
     cachedDropPointTime = tick()
     return nil
 end
@@ -281,10 +288,10 @@ local function pressBackspace()
     end)
 end
 
--- V3.0/V3.1/V3.2: Сбрасывает все тулы из инвентаря игрока в точку сдачи "cng666setna".
--- V3.2: Использует Backspace вместо UnequipTools — эмулирует реальное действие игрока.
--- Если точка сдачи не найдена — сбрасывает в текущей позиции.
--- Возвращает количество сброшенных тулз.
+-- V3.3: Сканирует ВЕСЬ инвентарь (Backpack + Character) и выкидывает АБСОЛЮТНО ВСЕ Tool
+-- (без фильтрации по Cup/Genesis/etc — это для сдачи NPC-торговцу). Игрок встаёт
+-- перед точкой cng666setna в направлении её LookVector — тулы падают именно туда
+-- куда NPC смотрит.
 local function dropAllTools()
     local character = LocalPlayer.Character
     if not character then return 0 end
@@ -293,7 +300,7 @@ local function dropAllTools()
     local backpack = LocalPlayer:FindFirstChild("Backpack")
     if not humanoid or not backpack or not hrp then return 0 end
 
-    -- Собираем все тулы (Backpack + Character)
+    -- V3.3: Собираем ВСЕ Tool из инвентаря (без фильтрации по ключевым словам)
     local allTools = {}
     for _, tool in pairs(backpack:GetChildren()) do
         if tool:IsA("Tool") then table.insert(allTools, tool) end
@@ -304,16 +311,24 @@ local function dropAllTools()
 
     if #allTools == 0 then return 0 end
 
-    -- V3.1: Ищем точку сдачи "cng666setna" в Workspace
-    local dropPoint = findDropPoint()
+    -- V3.1/V3.3: Ищем CFrame точки сдачи "cng666setna" в Workspace
+    local dropCFrame = findDropPoint()
 
     -- Сохраняем оригинальную позицию игрока
     local origCFrame = hrp.CFrame
     local wasAnchored = hrp.Anchored
 
-    if dropPoint then
-        -- Телепортируемся к точке сдачи (чуть выше чтоб тулы падали вниз)
-        hrp.CFrame = CFrame.new(dropPoint + Vector3.new(0, 3, 0))
+    if dropCFrame then
+        -- V3.3: Встаём ПЕРЕД точкой сдачи в направлении её взгляда.
+        -- dropCFrame.LookVector — куда "смотрит" NPC. Игрок встаёт по этому вектору
+        -- на расстоянии DROP_FORWARD_DISTANCE — туда тулы и упадут.
+        local forwardPos = dropCFrame.Position + dropCFrame.LookVector * DROP_FORWARD_DISTANCE
+        forwardPos = forwardPos + Vector3.new(0, 3, 0)  -- чуть выше чтоб тулы падали вниз
+
+        -- Игрока поворачиваем ЛИЦОМ к NPC (смотрим обратно по LookVector точки)
+        local lookAt = dropCFrame.Position
+        hrp.CFrame = CFrame.lookAt(forwardPos, Vector3.new(lookAt.X, forwardPos.Y, lookAt.Z))
+
         hrp.Anchored = true
         task.wait(0.1)
     end
@@ -326,14 +341,14 @@ local function dropAllTools()
             pcall(function() humanoid:EquipTool(tool) end)
             task.wait(0.05)
 
-            -- 2. Нажимаем Backspace — Roblox дропнет тулу
+            -- 2. Нажимаем Backspace — Roblox дропнет тулу впереди игрока (= перед NPC)
             pressBackspace()
             task.wait(0.05)
             droppedCount = droppedCount + 1
         end
     end
 
-    if dropPoint then
+    if dropCFrame then
         task.wait(0.1)  -- даём время последней туле упасть
         -- Возвращаемся на исходную позицию
         hrp.Anchored = wasAnchored
@@ -359,6 +374,11 @@ local function isAnchored(obj)
     if anyPart then return anyPart.Anchored end
     return false
 end
+
+-- Флаг занятости — пока обрабатываем одну цель (особенно бокс с длинным HoldDuration),
+-- следующий тик процесса не должен запускать новый таргет параллельно.
+-- V3.3: также используется при авто-сдаче в конце scanWorkspace.
+local processingBusy = false
 
 -- ===== СКАНИРОВАНИЕ (раз в SCAN_INTERVAL=5 сек, заполняет очередь TargetsQueue) =====
 local function scanWorkspace()
@@ -442,11 +462,37 @@ local function scanWorkspace()
     end
     StatusLabel.Text = string.format("Скан: %d боксов, %d тулз", boxCount, #TargetsQueue - boxCount)
     StatusLabel.TextColor3 = Color3.fromRGB(150, 200, 255)
-end
 
--- Флаг занятости — пока обрабатываем одну цель (особенно бокс с длинным HoldDuration),
--- следующий тик процесса не должен запускать новый таргет параллельно.
-local processingBusy = false
+    -- V3.3: после каждого скана автоматически сдаём весь инвентарь NPC.
+    -- Это гарантирует что Backpack всегда очищается, даже если новых целей не нашлось.
+    -- Делаем в отдельном потоке чтоб не блокировать сам цикл сканирования.
+    task.spawn(function()
+        local backpack = LocalPlayer:FindFirstChild("Backpack")
+        local character = LocalPlayer.Character
+        if not backpack or not character then return end
+
+        -- Проверяем что есть что сдавать
+        local hasTools = false
+        for _, t in pairs(backpack:GetChildren()) do
+            if t:IsA("Tool") then hasTools = true; break end
+        end
+        if not hasTools then
+            for _, t in pairs(character:GetChildren()) do
+                if t:IsA("Tool") then hasTools = true; break end
+            end
+        end
+
+        if hasTools and not processingBusy then
+            processingBusy = true
+            local ok, dropped = pcall(dropAllTools)
+            processingBusy = false
+            if ok and dropped and dropped > 0 then
+                StatusLabel.Text = string.format("📤 Авто-сдача: %d тулз → cng666setna", dropped)
+                StatusLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
+            end
+        end
+    end)
+end
 
 -- ===== БЫСТРЫЙ ПОДБОР (раз в PICKUP_INTERVAL=0.1 сек, берёт одну цель из очереди) =====
 local function processQueue()
