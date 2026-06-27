@@ -1,11 +1,13 @@
--- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V3.4) ]] --
--- Изменения V3.4:
---  * cng666setna теперь ИГРОК (Player), не объект в Workspace
---  * Скрипт телепортируется НАД HRP игрока cng666setna (на 4 studs выше)
---  * HRP игрока поворачивается в ту же сторону куда смотрит HRP NPC игрока (Rotation)
---  * Все Tool из Backpack перемещаются в Character одной операцией (без EquipTool)
---  * Backspace спамится МНОГО раз (totalTools*2+10) — пока все тулы не упадут
---  * Дроп НЕ происходит после каждого подбора — копим и сдаём в конце каждого скана
+-- [[ CUSTOM MULTI-KEYWORD & BOX FARMER + FREECAM (TMI V3.5) ]] --
+-- Изменения V3.5:
+--  * УБРАНА зависимость от игрока cng666setna
+--  * При нажатии Farm:ON — запоминается homeCFrame (позиция + Rotation HRP)
+--    и HRP анкорится (Anchored = true)
+--  * Дроп происходит на homeCFrame (где игрок стоял когда включил Farm)
+--  * При нажатии Farm:OFF — анкор снимается, homeCFrame обнуляется
+--  * При респавне (CharacterAdded) — homeCFrame обновляется и новый HRP анкорится
+-- Изменения V3.4 (УСТАРЕЛО — не использовать):
+--  * cng666setna теперь ИГРОК (Player), не объект в Workspace ❌
 -- Изменения V3.3:
 --  * Сдача ВСЕГО инвентаря (все Tool без фильтра по cup/genesis) — для NPC-торговца
 --  * Автоматическая сдача после каждого скана (каждые 5 сек)
@@ -109,7 +111,7 @@ Corner.Parent = MainFrame
 
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -28, 0, 28)
-TitleLabel.Text = "TMI V3.4 - Drop on Player"
+TitleLabel.Text = "TMI V3.5 - Home Anchor"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.BackgroundColor3 = Color3.fromRGB(30, 35, 45)
 TitleLabel.Font = Enum.Font.GothamBold
@@ -226,28 +228,11 @@ local function isInsideOtherPlayer(tool)
     return false
 end
 
--- V3.4: cng666setna — это другой ИГРОК (Player), а не объект в Workspace.
--- Скрипт ищет его Character в Players, телепортируется НАД его HRP и поворачивает
--- свой HRP в ту же сторону куда смотрит HRP NPC игрока.
-local DROP_PLAYER_NAME = "cng666setna"
-local DROP_ABOVE_HEIGHT = 4  -- studs над головой NPC игрока
-
--- Находит HRP игрока cng666setna. Возвращает HumanoidRootPart или nil.
--- V3.4: ищем именно среди Players, а не в Workspace.
-local function findDropPlayerHRP()
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer and plr.Name == DROP_PLAYER_NAME then
-            local char = plr.Character
-            if char then
-                local hrp = char:FindFirstChild("HumanoidRootPart")
-                if hrp and hrp:IsA("BasePart") then
-                    return hrp
-                end
-            end
-        end
-    end
-    return nil
-end
+-- V3.5: Точка сдачи = позиция и Rotation игрока в момент включения Farm.
+-- При нажатии "Farm: ON" — сохраняем homeCFrame, анкорим HRP.
+-- При нажатии "Farm: OFF" — снимаем анкор.
+-- Дроп = ТП на homeCFrame → перенос Tool → спам Backspace.
+local homeCFrame = nil  -- сохранённая позиция+поворот игрока (CFrame)
 
 -- V3.2: VirtualInputManager — сервис для эмуляции реальных нажатий клавиш.
 -- Используется для нажатия Backspace (стандартный хоткей Roblox для дропа тулы из руки).
@@ -263,10 +248,12 @@ local function pressBackspace()
     end)
 end
 
--- V3.4: Полностью новый дроп. Скрипт телепортируется НАД игроком cng666setna,
--- поворачивает свой HRP в ту же сторону куда смотрит HRP NPC игрока, перемещает
--- ВСЕ Tool из Backpack в Character и спамит Backspace много раз чтоб всё упало.
+-- V3.5: Дроп на homeCFrame (точка где игрок стоял когда включил Farm).
+-- Скрипт ТП на homeCFrame (с сохранённым Rotation) → переносит все Tool в Character
+-- → спамит Backspace. HRP всё время анкорится.
 local function dropAllTools()
+    if not homeCFrame then return 0 end  -- скрипт не запущен
+
     local character = LocalPlayer.Character
     if not character then return 0 end
     local humanoid = character:FindFirstChildOfClass("Humanoid")
@@ -284,31 +271,14 @@ local function dropAllTools()
     end
     if totalTools == 0 then return 0 end
 
-    -- V3.4: Ищем HRP игрока cng666setna
-    local cngHRP = findDropPlayerHRP()
-    if not cngHRP then
-        StatusLabel.Text = "⚠ Игрок " .. DROP_PLAYER_NAME .. " не найден"
-        StatusLabel.TextColor3 = Color3.fromRGB(255, 120, 120)
-        return 0
-    end
-
-    -- Сохраняем оригинальную позицию
-    local origCFrame = hrp.CFrame
-    local wasAnchored = hrp.Anchored
-
-    -- V3.4: Телепортируемся НАД игроком cng666setna и поворачиваем HRP в ту же сторону
-    -- куда смотрит HRP NPC (т.е. cng_hrp.CFrame.Rotation, не LookVector).
-    local cngPos = cngHRP.Position
-    local cngRotation = cngHRP.CFrame - cngPos  -- чистый Rotation без позиции
-
-    local newPos = cngPos + Vector3.new(0, DROP_ABOVE_HEIGHT, 0)
-    hrp.CFrame = CFrame.new(newPos) * cngRotation
-
+    -- V3.5: Снимаем анкор временно чтоб переместить, потом сразу обратно
+    hrp.Anchored = false
+    -- ТП на homeCFrame — точка где игрок стоял когда включил Farm
+    hrp.CFrame = homeCFrame
     hrp.Anchored = true
-    task.wait(0.15)  -- даём время телепорту прижиться
+    task.wait(0.1)
 
-    -- V3.4: Перемещаем ВСЕ Tool из Backpack в Character (НЕ через EquipTool — это
-    -- сразу всё засунет в руку как стек, и Backspace будет дропать по одному)
+    -- Переносим ВСЕ Tool из Backpack в Character
     for _, tool in pairs(backpack:GetChildren()) do
         if tool:IsA("Tool") then
             pcall(function() tool.Parent = character end)
@@ -316,14 +286,13 @@ local function dropAllTools()
     end
     task.wait(0.05)
 
-    -- V3.4: СПАМИМ Backspace много раз — Roblox дропнет тулы из руки по одной.
-    -- Делаем 50 нажатий с задержкой 30мс — этого хватит на любое количество тулз.
+    -- СПАМИМ Backspace много раз — Roblox дропнет тулы из руки по одной.
     local spamCount = math.max(totalTools * 2 + 10, 30)
     for i = 1, spamCount do
         pressBackspace()
         task.wait(0.03)
 
-        -- Проверяем не закончились ли тулы (есть ли ещё что дропать)
+        -- Каждые 5 нажатий проверяем не закончились ли тулы
         if i > 5 and i % 5 == 0 then
             local stillHasTools = false
             for _, tool in pairs(character:GetChildren()) do
@@ -332,15 +301,12 @@ local function dropAllTools()
             for _, tool in pairs(backpack:GetChildren()) do
                 if tool:IsA("Tool") then stillHasTools = true; break end
             end
-            if not stillHasTools then break end  -- всё сброшено — выходим раньше
+            if not stillHasTools then break end
         end
     end
 
-    task.wait(0.1)
-    -- Возвращаемся на исходную позицию
-    hrp.Anchored = wasAnchored
-    hrp.CFrame = origCFrame
-
+    -- HRP остаётся анкоренным и стоит на homeCFrame — следующий цикл подбора
+    -- временно снимет анкор для ТП к цели, и вернёт обратно
     return totalTools
 end
 
@@ -733,15 +699,33 @@ end
 ToggleButton.MouseButton1Click:Connect(function()
     _G.CupBoxFarmActive = not _G.CupBoxFarmActive
     if _G.CupBoxFarmActive then
-        ToggleButton.Text = "Farm: ON"
-        ToggleButton.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
-        StatusLabel.Text = "Farm Enabled. Скан каждые 5с, подбор каждые 0.1с"
-        StatusLabel.TextColor3 = Color3.fromRGB(0, 230, 118)
+        -- V3.5: При включении — сохраняем homeCFrame и анкорим HRP
+        local character = LocalPlayer.Character
+        local hrp = character and character:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            homeCFrame = hrp.CFrame  -- текущая позиция и Rotation = точка сдачи
+            hrp.Anchored = true
+            ToggleButton.Text = "Farm: ON"
+            ToggleButton.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+            StatusLabel.Text = "Farm ON. Точка сдачи зафиксирована, HRP анкорен."
+            StatusLabel.TextColor3 = Color3.fromRGB(0, 230, 118)
+        else
+            _G.CupBoxFarmActive = false
+            StatusLabel.Text = "⚠ Character не загружен — попробуйте позже"
+            StatusLabel.TextColor3 = Color3.fromRGB(255, 120, 120)
+        end
     else
+        -- V3.5: При выключении — снимаем анкор и очищаем homeCFrame
         ToggleButton.Text = "Farm: OFF"
         ToggleButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
         TargetsQueue = {}
-        StatusLabel.Text = "Farm Disabled"
+        local character = LocalPlayer.Character
+        local hrp = character and character:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            hrp.Anchored = false
+        end
+        homeCFrame = nil
+        StatusLabel.Text = "Farm OFF. HRP разанкорен."
         StatusLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
     end
 end)
@@ -758,6 +742,7 @@ end)
 -- ===== ПОЛНОЕ ЗАКРЫТИЕ СКРИПТА (V2.6) =====
 -- Останавливает все циклы, отключает FreeCam, чистит все ссылки и удаляет GUI
 local fInputConn = nil  -- forward-declare для коннекшена клавиши F
+local charAddedConn = nil  -- forward-declare для CharacterAdded коннекшена (V3.5)
 
 local function destroyScript()
     -- 1. Выключаем все режимы
@@ -773,10 +758,14 @@ local function destroyScript()
     TargetsQueue = {}
     Blacklist = setmetatable({}, { __mode = "k" })
 
-    -- 4. Отключаем коннекшены клавиатуры
+    -- 4. Отключаем коннекшены клавиатуры и CharacterAdded
     if fInputConn then
         fInputConn:Disconnect()
         fInputConn = nil
+    end
+    if charAddedConn then
+        pcall(function() charAddedConn:Disconnect() end)
+        charAddedConn = nil
     end
 
     -- 5. Восстанавливаем поведение мыши и камеру (на случай если FreeCam подвис)
@@ -785,7 +774,7 @@ local function destroyScript()
         camera.CameraType = Enum.CameraType.Custom
     end)
 
-    -- 5b. V2.7: снимаем Anchored у HRP на случай если убили скрипт во время активации бокса
+    -- 5b. V2.7/V3.5: снимаем Anchored у HRP (может быть от активации бокса или от Farm:ON)
     pcall(function()
         local char = LocalPlayer.Character
         if char then
@@ -793,6 +782,7 @@ local function destroyScript()
             if hrp then hrp.Anchored = false end
         end
     end)
+    homeCFrame = nil
 
     -- 6. Удаляем GUI
     pcall(function() ScreenGui:Destroy() end)
@@ -810,6 +800,21 @@ fInputConn = UIS.InputBegan:Connect(function(input, processed)
     if processed then return end
     if input.KeyCode == Enum.KeyCode.F and _G.FreeCamActive then
         stopFreeCam()
+    end
+end)
+
+-- V3.5: При респавне игрока (CharacterAdded) — если Farm:ON, переанкорим новый HRP
+-- и обновим homeCFrame (т.к. позиция реснутого Character не там где была).
+charAddedConn = LocalPlayer.CharacterAdded:Connect(function(char)
+    if _G.CupBoxFarmActive and _G.ScriptAlive then
+        local hrp = char:WaitForChild("HumanoidRootPart", 5)
+        if hrp then
+            task.wait(0.5)  -- даём респавну завершиться
+            homeCFrame = hrp.CFrame
+            hrp.Anchored = true
+            StatusLabel.Text = "♻ Респавн — точка сдачи обновлена"
+            StatusLabel.TextColor3 = Color3.fromRGB(180, 220, 255)
+        end
     end
 end)
 
