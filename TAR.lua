@@ -1,4 +1,4 @@
--- LocalScript (Cli243423342342ent)
+-- LocalScript (Client)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
