@@ -1,4 +1,4 @@
--- LocalScript (Cвафафlient)
+-- LocalScript (Client)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -20,7 +20,7 @@ local droppedItems = {}
 -- Разрешённые ключевые слова
 local ALLOWED_WORDS = {"box", "cup", "genesis", "silver", "gold", "copper", "essence"}
 
--- Хранит оригинальное состояние Enabled для всех промптов
+-- Для восстановления оригинального Enabled у мусорных промптов
 local originalEnabledStates = {}
 
 -- ====== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ======
@@ -66,27 +66,18 @@ local function isPurchaseItem(prompt)
 end
 
 local function shouldSkipItem(prompt)
-    if isPurchaseItem(prompt) then
-        return true
-    end
+    if isPurchaseItem(prompt) then return true end
 
     local obj = getParentObject(prompt)
     if not obj then return true end
-
-    -- Пропускаем ранее выброшенные
-    if droppedItems[obj] then
-        return true
-    end
+    if droppedItems[obj] then return true end
 
     local lowerName = obj.Name:lower()
     if lowerName:find("blood") or lowerName:find("garlic") or lowerName:find("oil") then
         return true
     end
-
     for _, word in ipairs(ALLOWED_WORDS) do
-        if lowerName:find(word) then
-            return false
-        end
+        if lowerName:find(word) then return false end
     end
     return true
 end
@@ -158,6 +149,7 @@ local function teleportHome()
     end
 end
 
+-- ====== НОВАЯ ФУНКЦИЯ АКТИВАЦИИ С ПРОВЕРКОЙ Triggered ======
 local function activatePrompt(prompt)
     if not isPromptValid(prompt) then return false end
 
@@ -166,30 +158,47 @@ local function activatePrompt(prompt)
 
     local angle = math.random() * 2 * math.pi
     local dist = math.random() * 1
-    local xOff = math.cos(angle) * dist
-    local zOff = math.sin(angle) * dist
-    local offset = Vector3.new(xOff, 0, zOff)
+    local offset = Vector3.new(math.cos(angle) * dist, 0, math.sin(angle) * dist)
 
     rootPart.CFrame = CFrame.new(targetPos + offset)
     task.wait(0.5)
+
+    -- Переменная успеха
+    local success = false
+    local conn
+    conn = prompt.Triggered:Connect(function()
+        success = true
+    end)
 
     prompt:InputHoldBegin()
     local holdTime = prompt.HoldDuration + 0.1
     task.wait(holdTime)
     prompt:InputHoldEnd()
+    task.wait(0.3) -- даём время на срабатывание Triggered
 
-    task.wait(0.3)
-    return true
+    conn:Disconnect()
+    return success
+end
+
+local function disableUnwantedPrompts(allPrompts)
+    for _, prompt in ipairs(allPrompts) do
+        if originalEnabledStates[prompt] == nil then
+            originalEnabledStates[prompt] = prompt.Enabled
+        end
+        if shouldSkipItem(prompt) then
+            prompt.Enabled = false
+        end
+    end
 end
 
 local function restorePromptsEnabled()
     local currentPrompts = getAllPrompts()
     for _, prompt in ipairs(currentPrompts) do
-        local original = originalEnabledStates[prompt]
-        if original ~= nil then
-            prompt.Enabled = original
+        local orig = originalEnabledStates[prompt]
+        if orig ~= nil then
+            prompt.Enabled = orig
         else
-            prompt.Enabled = true  -- по умолчанию новые предметы включены
+            prompt.Enabled = true  -- новые предметы включаем
         end
     end
     originalEnabledStates = {}
@@ -198,32 +207,28 @@ end
 local function dropRandomItem()
     local vim = game:GetService("VirtualInputManager")
 
-    -- Сначала проверяем, держит ли персонаж что-то в руках
     local equippedTool = character:FindFirstChildOfClass("Tool")
     if equippedTool then
-        -- Имитируем удержание Backspace
         vim:SendKeyEvent(true, Enum.KeyCode.Backspace, false, nil)
         task.wait(0.2)
         vim:SendKeyEvent(false, Enum.KeyCode.Backspace, false, nil)
-        task.wait(0.2) -- пауза, чтобы предмет успел появиться на земле
+        task.wait(0.2)
 
         droppedItems[equippedTool] = true
         return true
     end
 
-    -- Если в руках пусто, берём случайный предмет из рюкзака
     local items = {}
     for _, item in ipairs(backpack:GetChildren()) do
         if item:IsA("Tool") and not droppedItems[item] then
             table.insert(items, item)
         end
     end
-
     if #items == 0 then return false end
 
     local randomItem = items[math.random(1, #items)]
     character.Humanoid:EquipTool(randomItem)
-    task.wait(0.3) -- даём игре время экипировать предмет
+    task.wait(0.3)
 
     vim:SendKeyEvent(true, Enum.KeyCode.Backspace, false, nil)
     task.wait(0.2)
@@ -321,19 +326,10 @@ local function farmCycle()
     while isFarming and not stopRequested do
         local allPrompts = getAllPrompts()
 
-        -- Сохраняем исходное состояние новых промптов (которых не было при старте)
-        for _, prompt in ipairs(allPrompts) do
-            if originalEnabledStates[prompt] == nil then
-                originalEnabledStates[prompt] = prompt.Enabled
-            end
-        end
+        -- Отключаем только мусор (предметы из чёрного списка, покупные и т.д.)
+        -- Разрешённые предметы оставляем как есть!
+        disableUnwantedPrompts(allPrompts)
 
-        -- Выключаем ВСЕ ProximityPrompt на карте
-        for _, prompt in ipairs(allPrompts) do
-            prompt.Enabled = false
-        end
-
-        -- Выбираем разрешённые цели
         local validPrompts = {}
         for _, prompt in ipairs(allPrompts) do
             if not shouldSkipItem(prompt) then
@@ -341,7 +337,6 @@ local function farmCycle()
             end
         end
 
-        -- Сортировка: сначала коробки, потом остальные
         local boxPrompts, otherPrompts = {}, {}
         for _, prompt in ipairs(validPrompts) do
             if isBox(prompt) then
@@ -364,20 +359,22 @@ local function farmCycle()
                 end
             end
 
-            -- Последовательно активируем каждый промпт
+            -- Последовательно пытаемся собрать каждый предмет
             for _, prompt in ipairs(sortedPrompts) do
                 if not isFarming or stopRequested then break end
                 if isPromptValid(prompt) then
-                    prompt.Enabled = true         -- включаем только эту цель
-                    activatePrompt(prompt)
-                    prompt.Enabled = false        -- сразу выключаем, чтобы не мешал
+                    local success = activatePrompt(prompt)
+                    if not success then
+                        -- Предмет не подобрался (промпт не появился) – просто идём дальше,
+                        -- его ProximityPrompt останется включённым для следующей попытки
+                    end
                 end
                 task.wait(0.2)
             end
 
             clearHighlights()
 
-            -- Телепорт домой и принудительный сброс всего из рюкзака
+            -- Возвращаемся домой и выбрасываем ВСЁ из рюкзака
             teleportHome()
             while true do
                 local toolInHand = character:FindFirstChildOfClass("Tool")
@@ -397,10 +394,10 @@ local function farmCycle()
                     task.wait(0.1)
                 end
             end
-            task.wait(2)  -- пауза перед следующим сканированием
+            task.wait(2)
         end
 
-        -- Ожидание 5 секунд до нового сканирования
+        -- Ждём 5 секунд до следующего сканирования
         local waited = 0
         while waited < 5 and isFarming and not stopRequested do
             task.wait(0.5)
@@ -412,7 +409,7 @@ local function farmCycle()
     teleportHome()
 end
 
--- ====== ЦИКЛ АВТОДРОПА (работает только когда фарм выключен) ======
+-- ====== ЦИКЛ АВТОДРОПА ======
 function dropCycle()
     while isDropping do
         if isFarming then
@@ -433,7 +430,6 @@ toggleButton.MouseButton1Click:Connect(function()
     if not isFarming then
         homeCFrame = rootPart.CFrame
 
-        -- Сохраняем исходное состояние всех текущих промптов
         local initialPrompts = getAllPrompts()
         originalEnabledStates = {}
         for _, prompt in ipairs(initialPrompts) do
@@ -456,7 +452,7 @@ toggleButton.MouseButton1Click:Connect(function()
             coroutine.close(farmCoroutine)
             farmCoroutine = nil
         end
-        restorePromptsEnabled()   -- восстанавливаем все промпты
+        restorePromptsEnabled()
         teleportHome()
 
         toggleButton.Text = "▶ Включить"
