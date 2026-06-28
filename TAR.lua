@@ -1,4 +1,4 @@
--- LocalScript (Client444)
+-- LocalScript (Client)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -372,7 +372,7 @@ local function farmCycle()
                 local toolInHand = character:FindFirstChildOfClass("Tool")
                 if toolInHand then
                     dropRandomItem()
-                    task.wait(0.2)  -- маленькая пауза, можно убрать для максимального спама
+                    task.wait(0.2)
                 else
                     local backpackItems = {}
                     for _, item in ipairs(backpack:GetChildren()) do
@@ -386,7 +386,7 @@ local function farmCycle()
                     task.wait(0.1)
                 end
             end
-            task.wait(1)  -- небольшая пауза перед новым сканированием
+            task.wait(1)
         end
 
         local waited = 0
@@ -400,18 +400,14 @@ local function farmCycle()
     teleportHome()
 end
 
--- ====== ЦИКЛ АВТОДРОПА (БЕЗ ЗАДЕРЖЕК МЕЖДУ ПОПЫТКАМИ) ======
+-- ====== ЦИКЛ АВТОДРОПА (С ЗАДЕРЖКОЙ 0.5 СЕК МЕЖДУ ПОПЫТКАМИ) ======
 function dropCycle()
     while isDropping do
         if isFarming then
             task.wait(0.5)
         else
             dropRandomItem()
-            -- Никаких дополнительных задержек – сразу следующая итерация
-            -- Если предметов не было, даём крошечную передышку, чтобы не грузить процессор
-            if not (character:FindFirstChildOfClass("Tool") or #backpack:GetChildren() > 0) then
-                task.wait(0.05)
-            end
+            task.wait(0.5)  -- даём серверу время обработать дроп
         end
     end
 end
