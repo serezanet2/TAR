@@ -1,4 +1,4 @@
--- LocalScript (Client1)
+-- LocalScript (Client)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -19,7 +19,7 @@ local isFarmBusy = false
 -- Чёрный список выброшенных предметов
 local droppedItems = {}
 
--- Разрешённые ключевые слова (supply/medical – мусор)
+-- Разрешённые ключевые слова (supply/medical исключены как мусор)
 local ALLOWED_WORDS = {"box", "cup", "genesis", "silver", "gold", "copper", "essence"}
 
 -- Для восстановления исходного Enabled
@@ -65,7 +65,7 @@ local function shouldSkipItem(prompt)
     if not obj then return true end
     if droppedItems[obj] then return true end
     local lowerName = obj.Name:lower()
-    -- Мусор
+    -- Мусор: включая supply и medical
     if lowerName:find("blood") or lowerName:find("garlic") or lowerName:find("oil") 
        or lowerName:find("supply") or lowerName:find("medical") then
         return true
@@ -128,58 +128,24 @@ local function teleportHome()
     if homeCFrame and rootPart then rootPart.CFrame = homeCFrame end
 end
 
--- Телепорт к позиции промпта
-local function teleportToPrompt(prompt)
+-- ====== АКТИВАЦИЯ ПРОМПТА С ПРОВЕРКОЙ ======
+local function activatePrompt(prompt)
+    if not isPromptValid(prompt) then return false end
     local targetPos = getTargetPosition(prompt)
-    if targetPos then
-        local angle = math.random() * 2 * math.pi
-        local dist = math.random() * 1
-        local offset = Vector3.new(math.cos(angle) * dist, 0, math.sin(angle) * dist)
-        rootPart.CFrame = CFrame.new(targetPos + offset)
-    end
-end
-
--- Быстрая активация промпта (без лишних ожиданий)
-local function quickActivate(prompt)
-    if not isPromptValid(prompt) then return end
+    if not targetPos then return false end
+    local angle = math.random() * 2 * math.pi
+    local dist = math.random() * 1
+    local offset = Vector3.new(math.cos(angle) * dist, 0, math.sin(angle) * dist)
+    rootPart.CFrame = CFrame.new(targetPos + offset)
+    task.wait(0.5)
+    local success = false
+    local conn = prompt.Triggered:Connect(function() success = true end)
     prompt:InputHoldBegin()
-    task.wait(prompt.HoldDuration + 0.05)
+    task.wait(prompt.HoldDuration + 0.1)
     prompt:InputHoldEnd()
-end
-
--- Принудительный дроп всех предметов из рюкзака на точке home
-local function dropAllItems()
-    local toolsToMove = {}
-    for _, item in ipairs(backpack:GetChildren()) do
-        if item:IsA("Tool") then table.insert(toolsToMove, item) end
-    end
-    if #toolsToMove == 0 then return end
-
-    for _, tool in ipairs(toolsToMove) do tool.Parent = character end
-    task.wait(0.5)
-    for _, tool in ipairs(toolsToMove) do tool.Parent = backpack end
-    task.wait(0.5)
-
-    while true do
-        local toolInHand = character:FindFirstChildOfClass("Tool")
-        local vim = game:GetService("VirtualInputManager")
-        if toolInHand then
-            vim:SendKeyEvent(true, Enum.KeyCode.Backspace, false, nil)
-            task.wait(0.2)
-            vim:SendKeyEvent(false, Enum.KeyCode.Backspace, false, nil)
-            droppedItems[toolInHand] = true
-            task.wait(0.1)
-        else
-            local items = {}
-            for _, item in ipairs(backpack:GetChildren()) do
-                if item:IsA("Tool") then table.insert(items, item) end
-            end
-            if #items == 0 then break end
-            local randItem = items[math.random(1, #items)]
-            character.Humanoid:EquipTool(randItem)
-            task.wait(0.1)
-        end
-    end
+    task.wait(0.3)
+    conn:Disconnect()
+    return success
 end
 
 local function restorePromptsEnabled()
@@ -197,6 +163,7 @@ screenGui.Name = "FarmPanel"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = player:WaitForChild("PlayerGui")
 
+-- Главное окно (компактное)
 local frame = Instance.new("Frame")
 frame.Name = "MainFrame"
 frame.Size = UDim2.new(0, 200, 0, 160)
@@ -219,8 +186,9 @@ mainGradient.Color = ColorSequence.new({
 mainGradient.Rotation = 135
 mainGradient.Parent = frame
 
+-- Заголовок
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -80, 0, 24)
+title.Size = UDim2.new(1, -80, 0, 24)  -- освободили место под кнопки
 title.Position = UDim2.new(0, 10, 0, 6)
 title.BackgroundTransparency = 1
 title.Text = "AUTO FARM"
@@ -229,9 +197,12 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 16
 title.Parent = frame
 
+-- ===== КНОПКИ (исправлено расположение и размер) =====
+
+-- Кнопка сворачивания (⤓) – теперь удобно нажимать
 local minimizeButton = Instance.new("TextButton")
 minimizeButton.Size = UDim2.new(0, 30, 0, 30)
-minimizeButton.Position = UDim2.new(1, -70, 0, 4)
+minimizeButton.Position = UDim2.new(1, -70, 0, 4)   -- отступ от закрывающей кнопки
 minimizeButton.BackgroundColor3 = Color3.fromRGB(255, 180, 50)
 minimizeButton.Text = "⤓"
 minimizeButton.TextColor3 = Color3.new(1, 1, 1)
@@ -239,11 +210,13 @@ minimizeButton.Font = Enum.Font.GothamBold
 minimizeButton.TextSize = 18
 minimizeButton.BorderSizePixel = 0
 minimizeButton.Parent = frame
-Instance.new("UICorner", minimizeButton).CornerRadius = UDim.new(1, 0)
+local minCorner = Instance.new("UICorner", minimizeButton)
+minCorner.CornerRadius = UDim.new(1, 0)
 
+-- Кнопка закрытия (✕) – теперь легко нажать
 local closeButton = Instance.new("TextButton")
 closeButton.Size = UDim2.new(0, 30, 0, 30)
-closeButton.Position = UDim2.new(1, -34, 0, 4)
+closeButton.Position = UDim2.new(1, -34, 0, 4)   -- отступ от правого края
 closeButton.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
 closeButton.Text = "✕"
 closeButton.TextColor3 = Color3.new(1, 1, 1)
@@ -251,8 +224,10 @@ closeButton.Font = Enum.Font.GothamBold
 closeButton.TextSize = 18
 closeButton.BorderSizePixel = 0
 closeButton.Parent = frame
-Instance.new("UICorner", closeButton).CornerRadius = UDim.new(1, 0)
+local closeCorner = Instance.new("UICorner", closeButton)
+closeCorner.CornerRadius = UDim.new(1, 0)
 
+-- Кнопка фарма
 local toggleButton = Instance.new("TextButton")
 toggleButton.Size = UDim2.new(0, 160, 0, 34)
 toggleButton.Position = UDim2.new(0.5, -80, 0, 50)
@@ -266,6 +241,7 @@ toggleButton.Parent = frame
 local toggleCorner = Instance.new("UICorner", toggleButton)
 toggleCorner.CornerRadius = UDim.new(0, 10)
 
+-- Кнопка дропа
 local dropButton = Instance.new("TextButton")
 dropButton.Size = UDim2.new(0, 160, 0, 34)
 dropButton.Position = UDim2.new(0.5, -80, 0, 100)
@@ -279,6 +255,7 @@ dropButton.Parent = frame
 local dropCorner = Instance.new("UICorner", dropButton)
 dropCorner.CornerRadius = UDim.new(0, 10)
 
+-- Круглая кнопка TARC (изначально скрыта)
 local tarcButton = Instance.new("TextButton")
 tarcButton.Name = "TarcButton"
 tarcButton.Size = UDim2.new(0, 56, 0, 56)
@@ -291,11 +268,14 @@ tarcButton.TextSize = 18
 tarcButton.BorderSizePixel = 0
 tarcButton.Visible = false
 tarcButton.Parent = screenGui
-Instance.new("UICorner", tarcButton).CornerRadius = UDim.new(1, 0)
+local tarcCorner = Instance.new("UICorner", tarcButton)
+tarcCorner.CornerRadius = UDim.new(1, 0)
 
+-- Настройка анимаций
 local tweenInfoShow = TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local tweenInfoHide = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 
+-- Прячем панель (сворачивание) и показываем TARC
 local function hideMainPanel()
     local goal = {Position = UDim2.new(-0.5, -100, 0.5, -80)}
     local tween = TweenService:Create(frame, tweenInfoHide, goal)
@@ -309,6 +289,7 @@ local function hideMainPanel()
     end)
 end
 
+-- Показываем панель из свёрнутого состояния
 local function showMainPanel()
     tarcButton.Visible = false
     frame.Visible = true
@@ -321,6 +302,7 @@ end
 minimizeButton.MouseButton1Click:Connect(hideMainPanel)
 tarcButton.MouseButton1Click:Connect(showMainPanel)
 
+-- Обработчик закрытия (крестик)
 closeButton.MouseButton1Click:Connect(function()
     isFarming = false
     stopRequested = true
@@ -333,10 +315,9 @@ closeButton.MouseButton1Click:Connect(function()
     screenGui:Destroy()
 end)
 
--- ====== НОВЫЙ ЦИКЛ ФАРМА (по твоей схеме) ======
+-- ====== ФАРМ ЦИКЛ ======
 local function farmCycle()
     while isFarming and not stopRequested do
-        -- Скан (мгновенно)
         local allPrompts = getAllPrompts()
         for _, prompt in ipairs(allPrompts) do prompt.Enabled = false end
 
@@ -346,47 +327,22 @@ local function farmCycle()
         end
 
         if #validPrompts > 0 then
+            local targetPrompt = validPrompts[math.random(1, #validPrompts)]
             isFarmBusy = true
-
-            for _, targetPrompt in ipairs(validPrompts) do
-                if not isFarming or stopRequested then break end
-
-                clearHighlights()
-                local obj = getParentObject(targetPrompt)
-                if obj then
-                    local hl = createHighlight(obj, isBox(targetPrompt))
-                    if hl then table.insert(currentHighlights, hl) end
-                end
-                targetPrompt.Enabled = true
-
-                -- Телепорт к рандомной цели
-                teleportToPrompt(targetPrompt)
-                task.wait(0.1)
-
-                -- Подбор
-                if isPromptValid(targetPrompt) then
-                    quickActivate(targetPrompt)
-                end
-
-                targetPrompt.Enabled = false
-                clearHighlights()
-
-                task.wait(0.1)
+            clearHighlights()
+            local obj = getParentObject(targetPrompt)
+            if obj then
+                local hl = createHighlight(obj, isBox(targetPrompt))
+                if hl then table.insert(currentHighlights, hl) end
             end
-
+            targetPrompt.Enabled = true
+            if isPromptValid(targetPrompt) then activatePrompt(targetPrompt) end
+            targetPrompt.Enabled = false
+            clearHighlights()
             isFarmBusy = false
-
-            -- Телепорт домой + дроп
-            teleportHome()
             task.wait(0.1)
-            dropAllItems()
-
-            -- Ожидание 5 секунд перед новым сканом
-            local waited = 0
-            while waited < 5 and isFarming and not stopRequested do
-                task.wait(0.5); waited += 0.5
-            end
         else
+            isFarmBusy = false
             teleportHome()
             local waited = 0
             while waited < 5 and isFarming and not stopRequested do
@@ -399,7 +355,7 @@ local function farmCycle()
     isFarmBusy = false
 end
 
--- ====== ЦИКЛ АВТОДРОПА (работает независимо) ======
+-- ====== АВТОДРОП ======
 function dropCycle()
     local needPositionUpdate = true
     while isDropping do
@@ -451,7 +407,7 @@ function dropCycle()
     end
 end
 
--- ====== ОБРАБОТЧИКИ КНОПОК ======
+-- ====== ОБРАБОТЧИКИ КНОПОК ФАРМА/ДРОПА ======
 toggleButton.MouseButton1Click:Connect(function()
     if not isFarming then
         homeCFrame = rootPart.CFrame
