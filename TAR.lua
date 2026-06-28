@@ -1,4 +1,4 @@
--- LocalScript (Clie22222222nt)
+-- LocalScript (Client)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -326,6 +326,7 @@ closeCorner.Parent = closeButton
 -- ====== ОСНОВНОЙ ЦИКЛ ФАРМА ======
 local function farmCycle()
     while isFarming and not stopRequested do
+        rootPart.Anchored = false
 
         local allPrompts = getAllPrompts()
         disableUnwantedPrompts(allPrompts)
@@ -395,6 +396,8 @@ local function farmCycle()
                 end
             end
             task.wait(2)  -- небольшая пауза после выброса перед новым сканированием
+        else
+            -- Нет доступных предметов – просто ждём и сканируем снова
         end
 
         -- Ожидание перед следующим сканированием (5 секунд)
@@ -453,6 +456,9 @@ toggleButton.MouseButton1Click:Connect(function()
         isFarming = false
         stopRequested = true
         clearHighlights()
+        if rootPart then
+            rootPart.Anchored = false
+        end
         if farmCoroutine then
             coroutine.close(farmCoroutine)
             farmCoroutine = nil
@@ -491,6 +497,8 @@ closeButton.MouseButton1Click:Connect(function()
     isDropping = false
     
     clearHighlights()
+    if rootPart then
+    end
     if farmCoroutine then
         coroutine.close(farmCoroutine)
         farmCoroutine = nil
