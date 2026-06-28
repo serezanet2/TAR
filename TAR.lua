@@ -1,4 +1,4 @@
--- LocalScript (Client)
+-- LocalScript (Clie234234324nt)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -13,7 +13,6 @@ local currentHighlights = {}
 local farmCoroutine = nil
 local dropCoroutine = nil
 local stopRequested = false
-local restartRequested = false
 
 -- Разрешённые ключевые слова
 local ALLOWED_WORDS = {"box", "cup", "genesis", "silver", "gold", "copper", "essence"}
@@ -341,96 +340,67 @@ local function farmCycle()
         for _, v in ipairs(boxPrompts) do table.insert(sortedPrompts, v) end
         for _, v in ipairs(otherPrompts) do table.insert(sortedPrompts, v) end
 
-        -- Если предметов для фарма нет – завершаем цикл
-        if #sortedPrompts == 0 then
-            isFarming = false
-            stopRequested = true
-            break
-        end
-
-        clearHighlights()
-        for _, prompt in ipairs(sortedPrompts) do
-            local obj = getParentObject(prompt)
-            if obj then
-                local useRed = isBox(prompt)
-                local hl = createHighlight(obj, useRed)
-                if hl then table.insert(currentHighlights, hl) end
+        -- Если есть предметы – фармим, если нет – просто ждём 5 секунд и проверяем снова
+        if #sortedPrompts > 0 then
+            clearHighlights()
+            for _, prompt in ipairs(sortedPrompts) do
+                local obj = getParentObject(prompt)
+                if obj then
+                    local useRed = isBox(prompt)
+                    local hl = createHighlight(obj, useRed)
+                    if hl then table.insert(currentHighlights, hl) end
+                end
             end
-        end
 
-        for _, prompt in ipairs(sortedPrompts) do
-            if not isFarming or stopRequested then break end
-            if isPromptValid(prompt) then
-                activatePrompt(prompt)
+            for _, prompt in ipairs(sortedPrompts) do
+                if not isFarming or stopRequested then break end
+                if isPromptValid(prompt) then
+                    activatePrompt(prompt)
+                end
+                task.wait(0.2)
             end
+
+            clearHighlights()
             task.wait(0.2)
+            rootPart.Anchored = true
         end
 
-        clearHighlights()
-        task.wait(0.2)
-        rootPart.Anchored = true
-
+        -- Ожидание перед повторным сканированием (5 секунд)
         local waited = 0
         while waited < 5 and isFarming and not stopRequested do
-            if restartRequested then
-                restartRequested = false
-                break
-            end
             task.wait(0.5)
             waited = waited + 0.5
         end
     end
 
-    -- Завершение фарма: чистим, телепортируемся, перезапускаем дроп (если был включён)
+    -- Сюда попадаем только когда isFarming = false или stopRequested
     clearHighlights()
     rootPart.Anchored = false
     teleportHome()
-
-    if isDropping then
-        if dropCoroutine then coroutine.close(dropCoroutine) end
-        dropCoroutine = coroutine.create(dropCycle)
-        coroutine.resume(dropCoroutine)
-    end
 end
 
 -- ====== ЦИКЛ ВЫБРОСА ПРЕДМЕТОВ ======
-function dropCycle()   -- объявлена глобально, чтобы можно было перезапускать из других мест
+function dropCycle()
     while isDropping do
         if isFarming then
+            -- Во время фарма дроп не работает, просто ждём
             task.wait(0.5)
         else
             local hasItems = dropRandomItem()
             if hasItems then
                 task.wait(0.5)
             else
-                -- Закончились предметы – выключаем дроп и обновляем кнопку
-                isDropping = false
-                dropButton.Text = "🗑 Auto Drop"
-                dropButton.BackgroundColor3 = Color3.new(0.6, 0.4, 0.2)
-                break
+                -- Нет предметов – ждём 1 секунду и проверяем снова
+                task.wait(1)
             end
         end
     end
 end
 
--- ====== ТАЙМЕР АВТОРЕСТАРТА ======
-local restartTimerCoroutine
-local function startRestartTimer()
-    if restartTimerCoroutine then coroutine.close(restartTimerCoroutine) end
-    restartTimerCoroutine = coroutine.create(function()
-        while isFarming do
-            task.wait(5)
-            if isFarming then
-                restartRequested = true
-            end
-        end
-    end)
-    coroutine.resume(restartTimerCoroutine)
-end
-
 -- ====== ОБРАБОТЧИКИ КНОПОК ======
 toggleButton.MouseButton1Click:Connect(function()
     if not isFarming then
+        -- Включаем фарм
         homeCFrame = rootPart.CFrame
 
         local initialPrompts = getAllPrompts()
@@ -441,16 +411,14 @@ toggleButton.MouseButton1Click:Connect(function()
 
         isFarming = true
         stopRequested = false
-        restartRequested = false
         toggleButton.Text = "⏹ Остановить"
         toggleButton.BackgroundColor3 = Color3.new(0.6, 0.2, 0.2)
-
-        startRestartTimer()
 
         if farmCoroutine then coroutine.close(farmCoroutine) end
         farmCoroutine = coroutine.create(farmCycle)
         coroutine.resume(farmCoroutine)
     else
+        -- Выключаем фарм
         isFarming = false
         stopRequested = true
         clearHighlights()
@@ -461,19 +429,8 @@ toggleButton.MouseButton1Click:Connect(function()
             coroutine.close(farmCoroutine)
             farmCoroutine = nil
         end
-        if restartTimerCoroutine then
-            coroutine.close(restartTimerCoroutine)
-            restartTimerCoroutine = nil
-        end
         restorePromptsEnabled()
         teleportHome()
-
-        -- При ручной остановке тоже перезапускаем дроп, если он был активен
-        if isDropping then
-            if dropCoroutine then coroutine.close(dropCoroutine) end
-            dropCoroutine = coroutine.create(dropCycle)
-            coroutine.resume(dropCoroutine)
-        end
 
         toggleButton.Text = "▶ Включить"
         toggleButton.BackgroundColor3 = Color3.new(0.2, 0.6, 0.2)
@@ -516,10 +473,6 @@ closeButton.MouseButton1Click:Connect(function()
     if dropCoroutine then
         coroutine.close(dropCoroutine)
         dropCoroutine = nil
-    end
-    if restartTimerCoroutine then
-        coroutine.close(restartTimerCoroutine)
-        restartTimerCoroutine = nil
     end
     restorePromptsEnabled()
     teleportHome()
