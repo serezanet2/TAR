@@ -19,7 +19,7 @@ local isFarmBusy = false
 -- Чёрный список выброшенных предметов
 local droppedItems = {}
 
--- Разрешённые ключевые слова (supply/medical исключены как мусор)
+-- Разрешённые ключевые слова (supply/medical – мусор)
 local ALLOWED_WORDS = {"box", "cup", "genesis", "silver", "gold", "copper", "essence"}
 
 -- Для восстановления исходного Enabled
@@ -65,7 +65,7 @@ local function shouldSkipItem(prompt)
     if not obj then return true end
     if droppedItems[obj] then return true end
     local lowerName = obj.Name:lower()
-    -- Мусор, включая supply и medical
+    -- Мусор
     if lowerName:find("blood") or lowerName:find("garlic") or lowerName:find("oil") 
        or lowerName:find("supply") or lowerName:find("medical") then
         return true
@@ -128,24 +128,58 @@ local function teleportHome()
     if homeCFrame and rootPart then rootPart.CFrame = homeCFrame end
 end
 
--- ====== МАКСИМАЛЬНО БЫСТРАЯ АКТИВАЦИЯ ПРОМПТА (все задержки 0.05) ======
-local function activatePrompt(prompt)
-    if not isPromptValid(prompt) then return false end
+-- Телепорт к позиции промпта
+local function teleportToPrompt(prompt)
     local targetPos = getTargetPosition(prompt)
-    if not targetPos then return false end
-    local angle = math.random() * 2 * math.pi
-    local dist = math.random() * 1
-    local offset = Vector3.new(math.cos(angle) * dist, 0, math.sin(angle) * dist)
-    rootPart.CFrame = CFrame.new(targetPos + offset)
-    task.wait(0.05)  -- минимальная пауза после телепорта
-    local success = false
-    local conn = prompt.Triggered:Connect(function() success = true end)
+    if targetPos then
+        local angle = math.random() * 2 * math.pi
+        local dist = math.random() * 1
+        local offset = Vector3.new(math.cos(angle) * dist, 0, math.sin(angle) * dist)
+        rootPart.CFrame = CFrame.new(targetPos + offset)
+    end
+end
+
+-- Быстрая активация промпта (без лишних ожиданий)
+local function quickActivate(prompt)
+    if not isPromptValid(prompt) then return end
     prompt:InputHoldBegin()
-    task.wait(prompt.HoldDuration + 0.05)  -- удержание с минимальной добавкой
+    task.wait(prompt.HoldDuration + 0.05)
     prompt:InputHoldEnd()
-    task.wait(0.05)  -- минимальная пауза после активации
-    conn:Disconnect()
-    return success
+end
+
+-- Принудительный дроп всех предметов из рюкзака на точке home
+local function dropAllItems()
+    local toolsToMove = {}
+    for _, item in ipairs(backpack:GetChildren()) do
+        if item:IsA("Tool") then table.insert(toolsToMove, item) end
+    end
+    if #toolsToMove == 0 then return end
+
+    for _, tool in ipairs(toolsToMove) do tool.Parent = character end
+    task.wait(0.5)
+    for _, tool in ipairs(toolsToMove) do tool.Parent = backpack end
+    task.wait(0.5)
+
+    while true do
+        local toolInHand = character:FindFirstChildOfClass("Tool")
+        local vim = game:GetService("VirtualInputManager")
+        if toolInHand then
+            vim:SendKeyEvent(true, Enum.KeyCode.Backspace, false, nil)
+            task.wait(0.2)
+            vim:SendKeyEvent(false, Enum.KeyCode.Backspace, false, nil)
+            droppedItems[toolInHand] = true
+            task.wait(0.1)
+        else
+            local items = {}
+            for _, item in ipairs(backpack:GetChildren()) do
+                if item:IsA("Tool") then table.insert(items, item) end
+            end
+            if #items == 0 then break end
+            local randItem = items[math.random(1, #items)]
+            character.Humanoid:EquipTool(randItem)
+            task.wait(0.1)
+        end
+    end
 end
 
 local function restorePromptsEnabled()
@@ -157,7 +191,7 @@ local function restorePromptsEnabled()
     originalEnabledStates = {}
 end
 
--- ====== GUI (без изменений) ======
+-- ====== GUI ======
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "FarmPanel"
 screenGui.ResetOnSpawn = false
@@ -299,9 +333,10 @@ closeButton.MouseButton1Click:Connect(function()
     screenGui:Destroy()
 end)
 
--- ====== ОСНОВНОЙ ЦИКЛ ФАРМА (без лишних пауз) ======
+-- ====== НОВЫЙ ЦИКЛ ФАРМА (по твоей схеме) ======
 local function farmCycle()
     while isFarming and not stopRequested do
+        -- Скан (мгновенно)
         local allPrompts = getAllPrompts()
         for _, prompt in ipairs(allPrompts) do prompt.Enabled = false end
 
@@ -311,22 +346,47 @@ local function farmCycle()
         end
 
         if #validPrompts > 0 then
-            local targetPrompt = validPrompts[math.random(1, #validPrompts)]
             isFarmBusy = true
-            clearHighlights()
-            local obj = getParentObject(targetPrompt)
-            if obj then
-                local hl = createHighlight(obj, isBox(targetPrompt))
-                if hl then table.insert(currentHighlights, hl) end
+
+            for _, targetPrompt in ipairs(validPrompts) do
+                if not isFarming or stopRequested then break end
+
+                clearHighlights()
+                local obj = getParentObject(targetPrompt)
+                if obj then
+                    local hl = createHighlight(obj, isBox(targetPrompt))
+                    if hl then table.insert(currentHighlights, hl) end
+                end
+                targetPrompt.Enabled = true
+
+                -- Телепорт к рандомной цели
+                teleportToPrompt(targetPrompt)
+                task.wait(0.1)
+
+                -- Подбор
+                if isPromptValid(targetPrompt) then
+                    quickActivate(targetPrompt)
+                end
+
+                targetPrompt.Enabled = false
+                clearHighlights()
+
+                task.wait(0.1)
             end
-            targetPrompt.Enabled = true
-            if isPromptValid(targetPrompt) then activatePrompt(targetPrompt) end
-            targetPrompt.Enabled = false
-            clearHighlights()
+
             isFarmBusy = false
-            -- Без дополнительной паузы
+
+            -- Телепорт домой + дроп
+            teleportHome()
+            task.wait(0.1)
+            dropAllItems()
+
+            -- Ожидание 5 секунд перед новым сканом
+            local waited = 0
+            while waited < 5 and isFarming and not stopRequested do
+                task.wait(0.5); waited += 0.5
+            end
         else
-            isFarmBusy = false
             teleportHome()
             local waited = 0
             while waited < 5 and isFarming and not stopRequested do
@@ -339,7 +399,7 @@ local function farmCycle()
     isFarmBusy = false
 end
 
--- ====== АВТОДРОП (без изменений) ======
+-- ====== ЦИКЛ АВТОДРОПА (работает независимо) ======
 function dropCycle()
     local needPositionUpdate = true
     while isDropping do
