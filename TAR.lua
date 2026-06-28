@@ -14,6 +14,9 @@ local farmCoroutine = nil
 local dropCoroutine = nil
 local stopRequested = false
 
+-- Новый флаг: true только во время активного сбора предметов
+local isFarmBusy = false
+
 -- Чёрный список выброшенных предметов (инстансы Tools)
 local droppedItems = {}
 
@@ -311,6 +314,9 @@ local function farmCycle()
         for _, v in ipairs(otherPrompts) do table.insert(sortedPrompts, v) end
 
         if #sortedPrompts > 0 then
+            -- НАЧИНАЕМ АКТИВНЫЙ СБОР
+            isFarmBusy = true
+
             clearHighlights()
             for _, prompt in ipairs(sortedPrompts) do
                 local obj = getParentObject(prompt)
@@ -330,11 +336,16 @@ local function farmCycle()
 
             clearHighlights()
 
-            -- === ВОЗВРАЩАЕМСЯ ДОМОЙ ПОСЛЕ СБОРА ===
+            -- ВОЗВРАЩАЕМСЯ ДОМОЙ ПОСЛЕ СБОРА
             teleportHome()
+            -- ЗАВЕРШИЛИ АКТИВНУЮ ФАЗУ
+            isFarmBusy = false
+        else
+            -- Если предметов нет, фарм точно не занят
+            isFarmBusy = false
         end
 
-        -- Ждём 5 секунд перед следующим сканированием
+        -- Ждём 5 секунд перед следующим сканированием (уже на точке home)
         local waited = 0
         while waited < 5 and isFarming and not stopRequested do
             task.wait(0.5)
@@ -344,6 +355,7 @@ local function farmCycle()
 
     clearHighlights()
     teleportHome()
+    isFarmBusy = false  -- на случай, если вышли из цикла во время сбора
 end
 
 -- ====== ЦИКЛ АВТОДРОПА (С ПЕРЕМЕЩЕНИЕМ ПРЕДМЕТОВ В CHARACTER ДЛЯ ПРИВЯЗКИ К HOME) ======
@@ -351,14 +363,15 @@ function dropCycle()
     local needPositionUpdate = true
 
     while isDropping do
-        if isFarming then
-            needPositionUpdate = true
+        -- Пропускаем дроп, только когда фарм РЕАЛЬНО в движении (собирает предметы)
+        if isFarmBusy then
+            needPositionUpdate = true   -- после окончания busy-режима обновим позиции предметов
             task.wait(0.5)
         else
-            -- Шаг 1: телепорт на home
+            -- Шаг 1: телепорт на home (на всякий случай, если вдруг не там)
             teleportHome()
 
-            -- Шаг 2: одноразовое перемещение всех предметов в character и обратно
+            -- Шаг 2: одноразовое перемещение всех предметов в character и обратно для обновления позиций
             if needPositionUpdate then
                 local toolsToMove = {}
                 for _, item in ipairs(backpack:GetChildren()) do
@@ -380,7 +393,7 @@ function dropCycle()
             end
 
             -- Шаг 3: быстрый циклический выброс
-            while isDropping and not isFarming do
+            while isDropping and not isFarmBusy do
                 local toolInHand = character:FindFirstChildOfClass("Tool")
                 local vim = game:GetService("VirtualInputManager")
 
