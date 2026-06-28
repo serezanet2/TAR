@@ -1,4 +1,4 @@
--- LocalScript (Client)
+-- LocalScript (Cl234234324ient)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -6,7 +6,7 @@ local rootPart = character:WaitForChild("HumanoidRootPart")
 
 -- Состояния
 local isFarming = false
-local homeCFrame = nil               -- домашний CFrame (позиция + поворот)
+local homeCFrame = nil
 local currentHighlights = {}
 local farmCoroutine = nil
 local stopRequested = false
@@ -129,7 +129,7 @@ local function isPromptValid(prompt)
     return getParentObject(prompt) ~= nil
 end
 
--- Активация промпта с боковым смещением и возвратом в homeCFrame
+-- Активация промпта с улучшенными задержками
 local function activatePrompt(prompt)
     if not isPromptValid(prompt) then return false end
 
@@ -144,14 +144,16 @@ local function activatePrompt(prompt)
     local offset = Vector3.new(xOff, 0, zOff)
 
     rootPart.CFrame = CFrame.new(targetPos + offset)
-    task.wait(0.1)
+    task.wait(0.1)                     -- задержка перед началом удержания
 
     prompt:InputHoldBegin()
     local holdTime = prompt.HoldDuration + 0.1
-    task.wait(holdTime)
+    task.wait(holdTime)                -- само удержание
     prompt:InputHoldEnd()
 
-    -- Возвращаемся строго на домашнюю точку
+    task.wait(0.1)                     -- <-- НОВОЕ: пауза после отпускания, чтобы сервер успел обработать подбор
+
+    -- Возвращаемся на домашнюю точку
     if homeCFrame then
         rootPart.CFrame = homeCFrame
     end
@@ -226,9 +228,9 @@ local function farmCycle()
             for _, prompt in ipairs(sortedPrompts) do
                 if not isFarming or stopRequested then break end
                 if isPromptValid(prompt) then
-                    activatePrompt(prompt)   -- внутри возврат на homeCFrame
+                    activatePrompt(prompt)   -- внутри возврат на homeCFrame с задержкой 0.1
                 end
-                task.wait(0.1)
+                task.wait(0.1)   -- дополнительная пауза между предметами
             end
 
             clearHighlights()
