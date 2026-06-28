@@ -1,4 +1,4 @@
--- LocalScript (Client67)
+-- LocalScript (Client)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -285,7 +285,7 @@ local closeCorner = Instance.new("UICorner")
 closeCorner.CornerRadius = UDim.new(0, 8)
 closeCorner.Parent = closeButton
 
--- ====== ОСНОВНОЙ ЦИКЛ ФАРМА (ТОЛЬКО СБОР) ======
+-- ====== ОСНОВНОЙ ЦИКЛ ФАРМА (С АВТОВОЗВРАТОМ НА БАЗУ ПОСЛЕ СБОРА) ======
 local function farmCycle()
     while isFarming and not stopRequested do
         local allPrompts = getAllPrompts()
@@ -329,6 +329,9 @@ local function farmCycle()
             end
 
             clearHighlights()
+
+            -- === ВОЗВРАЩАЕМСЯ ДОМОЙ ПОСЛЕ СБОРА ===
+            teleportHome()
         end
 
         -- Ждём 5 секунд перед следующим сканированием
@@ -343,14 +346,12 @@ local function farmCycle()
     teleportHome()
 end
 
--- ====== НОВЫЙ ЦИКЛ АВТОДРОПА (С ПЕРЕМЕЩЕНИЕМ ВСЕХ ПРЕДМЕТОВ В CHARACTER ДЛЯ ПРИВЯЗКИ К HOME) ======
+-- ====== ЦИКЛ АВТОДРОПА (С ПЕРЕМЕЩЕНИЕМ ПРЕДМЕТОВ В CHARACTER ДЛЯ ПРИВЯЗКИ К HOME) ======
 function dropCycle()
-    -- Флаг, чтобы перемещение предметов выполнялось только один раз при входе в дроп
     local needPositionUpdate = true
 
     while isDropping do
         if isFarming then
-            -- Пока фарм активен, просто ждём и сбрасываем флаг, чтобы при следующем входе в дроп обновиться
             needPositionUpdate = true
             task.wait(0.5)
         else
@@ -359,7 +360,6 @@ function dropCycle()
 
             -- Шаг 2: одноразовое перемещение всех предметов в character и обратно
             if needPositionUpdate then
-                -- Переносим все Tool из Backpack в character
                 local toolsToMove = {}
                 for _, item in ipairs(backpack:GetChildren()) do
                     if item:IsA("Tool") then
@@ -369,31 +369,28 @@ function dropCycle()
                 for _, tool in ipairs(toolsToMove) do
                     tool.Parent = character
                 end
-                task.wait(0.5) -- ждём обновления позиций
+                task.wait(0.5)
 
-                -- Возвращаем обратно в Backpack
                 for _, tool in ipairs(toolsToMove) do
                     tool.Parent = backpack
                 end
-                task.wait(0.5) -- пауза после возврата
+                task.wait(0.5)
 
                 needPositionUpdate = false
             end
 
-            -- Шаг 3: быстрый циклический выброс предметов
+            -- Шаг 3: быстрый циклический выброс
             while isDropping and not isFarming do
                 local toolInHand = character:FindFirstChildOfClass("Tool")
                 local vim = game:GetService("VirtualInputManager")
 
                 if toolInHand then
-                    -- Уже держим предмет – сразу выбрасываем
                     vim:SendKeyEvent(true, Enum.KeyCode.Backspace, false, nil)
-                    task.wait(0.2)   -- удержание клавиши
+                    task.wait(0.2)
                     vim:SendKeyEvent(false, Enum.KeyCode.Backspace, false, nil)
                     droppedItems[toolInHand] = true
-                    task.wait(0.1)   -- пауза после выброса
+                    task.wait(0.1)
                 else
-                    -- Берём случайный предмет из рюкзака
                     local items = {}
                     for _, item in ipairs(backpack:GetChildren()) do
                         if item:IsA("Tool") then
@@ -404,15 +401,14 @@ function dropCycle()
                     if #items > 0 then
                         local randItem = items[math.random(1, #items)]
                         character.Humanoid:EquipTool(randItem)
-                        task.wait(0.1)   -- ждём экипировку
+                        task.wait(0.1)
 
                         vim:SendKeyEvent(true, Enum.KeyCode.Backspace, false, nil)
-                        task.wait(0.2)   -- удержание
+                        task.wait(0.2)
                         vim:SendKeyEvent(false, Enum.KeyCode.Backspace, false, nil)
                         droppedItems[randItem] = true
-                        task.wait(0.1)   -- пауза после выброса
+                        task.wait(0.1)
                     else
-                        -- Нет предметов – ждём и продолжаем попытки
                         task.wait(0.5)
                     end
                 end
