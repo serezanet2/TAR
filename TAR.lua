@@ -1,4 +1,4 @@
--- LocalScript (Client)
+-- LocalScript (Cl324234ient)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -50,39 +50,15 @@ local function getParentObject(prompt)
     return parent
 end
 
--- Проверка на покупной предмет (содержит $ в тексте промпта)
-local function isPurchaseItem(prompt)
-    -- Проверяем ObjectText
-    if prompt.ObjectText and prompt.ObjectText:find("$") then
-        return true
-    end
-    -- Проверяем ActionText
-    if prompt.ActionText and prompt.ActionText:find("$") then
-        return true
-    end
-    -- Проверяем имя самого промпта
-    if prompt.Name:find("$") then
-        return true
-    end
-    return false
-end
-
 local function shouldSkipItem(prompt)
-    -- Пропускаем покупные предметы (с $)
-    if isPurchaseItem(prompt) then
-        return true
-    end
-
     local obj = getParentObject(prompt)
     if not obj then return true end
     local lowerName = obj.Name:lower()
 
-    -- Пропускаем мусор
     if lowerName:find("blood") or lowerName:find("garlic") or lowerName:find("oil") then
         return true
     end
 
-    -- Проверяем разрешённые слова
     for _, word in ipairs(ALLOWED_WORDS) do
         if lowerName:find(word) then
             return false
@@ -153,7 +129,7 @@ local function isPromptValid(prompt)
     return getParentObject(prompt) ~= nil
 end
 
--- Активация промпта с задержками
+-- Активация промпта с УВЕЛИЧЕННЫМИ задержками
 local function activatePrompt(prompt)
     if not isPromptValid(prompt) then return false end
 
@@ -168,15 +144,16 @@ local function activatePrompt(prompt)
     local offset = Vector3.new(xOff, 0, zOff)
 
     rootPart.CFrame = CFrame.new(targetPos + offset)
-    task.wait(0.5)
+    task.wait(0.5)                     -- БЫЛО 0.1, СТАЛО 0.5 — чтобы промпт успел зарегистрировать игрока
 
     prompt:InputHoldBegin()
     local holdTime = prompt.HoldDuration + 0.1
-    task.wait(holdTime)
+    task.wait(holdTime)                -- само удержание
     prompt:InputHoldEnd()
 
-    task.wait(0.3)
+    task.wait(0.3)                     -- БЫЛО 0.1, СТАЛО 0.3 — чтобы сервер обработал подбор
 
+    -- Возвращаемся на домашнюю точку
     if homeCFrame then
         rootPart.CFrame = homeCFrame
     end
@@ -209,9 +186,11 @@ local function farmCycle()
     while isFarming and not stopRequested do
         rootPart.Anchored = false
 
+        -- Новое сканирование
         local allPrompts = getAllPrompts()
         disableUnwantedPrompts(allPrompts)
 
+        -- Отбор разрешённых
         local validPrompts = {}
         for _, prompt in ipairs(allPrompts) do
             if not shouldSkipItem(prompt) then
@@ -219,6 +198,7 @@ local function farmCycle()
             end
         end
 
+        -- Разделяем на боксы и остальное
         local boxPrompts = {}
         local otherPrompts = {}
         for _, prompt in ipairs(validPrompts) do
@@ -229,6 +209,7 @@ local function farmCycle()
             end
         end
 
+        -- Порядок: сначала боксы, потом остальные
         local sortedPrompts = {}
         for _, v in ipairs(boxPrompts) do table.insert(sortedPrompts, v) end
         for _, v in ipairs(otherPrompts) do table.insert(sortedPrompts, v) end
@@ -249,7 +230,7 @@ local function farmCycle()
                 if isPromptValid(prompt) then
                     activatePrompt(prompt)
                 end
-                task.wait(0.2)
+                task.wait(0.2)   -- БЫЛО 0.1, СТАЛО 0.2 — пауза между предметами
             end
 
             clearHighlights()
@@ -259,6 +240,7 @@ local function farmCycle()
             rootPart.Anchored = true
         end
 
+        -- Пауза между проходами
         local waited = 0
         while waited < 5 and isFarming and not stopRequested do
             if restartRequested then
@@ -360,8 +342,10 @@ closeCorner.Parent = closeButton
 -- ====== ОБРАБОТЧИКИ ======
 toggleButton.MouseButton1Click:Connect(function()
     if not isFarming then
+        -- Запоминаем домашний CFrame
         homeCFrame = rootPart.CFrame
 
+        -- Запоминаем исходное состояние всех промптов
         local initialPrompts = getAllPrompts()
         originalEnabledStates = {}
         for _, prompt in ipairs(initialPrompts) do
