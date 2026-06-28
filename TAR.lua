@@ -1,4 +1,4 @@
--- LocalScript (Client)
+-- LocalScript (Client444)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -149,7 +149,7 @@ local function teleportHome()
     end
 end
 
--- ====== НОВАЯ ФУНКЦИЯ АКТИВАЦИИ С ПРОВЕРКОЙ Triggered ======
+-- ====== ФУНКЦИЯ АКТИВАЦИИ С ПРОВЕРКОЙ Triggered ======
 local function activatePrompt(prompt)
     if not isPromptValid(prompt) then return false end
 
@@ -163,7 +163,6 @@ local function activatePrompt(prompt)
     rootPart.CFrame = CFrame.new(targetPos + offset)
     task.wait(0.5)
 
-    -- Переменная успеха
     local success = false
     local conn
     conn = prompt.Triggered:Connect(function()
@@ -174,7 +173,7 @@ local function activatePrompt(prompt)
     local holdTime = prompt.HoldDuration + 0.1
     task.wait(holdTime)
     prompt:InputHoldEnd()
-    task.wait(0.3) -- даём время на срабатывание Triggered
+    task.wait(0.3)
 
     conn:Disconnect()
     return success
@@ -198,12 +197,13 @@ local function restorePromptsEnabled()
         if orig ~= nil then
             prompt.Enabled = orig
         else
-            prompt.Enabled = true  -- новые предметы включаем
+            prompt.Enabled = true
         end
     end
     originalEnabledStates = {}
 end
 
+-- ====== ФУНКЦИЯ ВЫБРОСА ОДНОГО ПРЕДМЕТА ======
 local function dropRandomItem()
     local vim = game:GetService("VirtualInputManager")
 
@@ -325,9 +325,6 @@ closeCorner.Parent = closeButton
 local function farmCycle()
     while isFarming and not stopRequested do
         local allPrompts = getAllPrompts()
-
-        -- Отключаем только мусор (предметы из чёрного списка, покупные и т.д.)
-        -- Разрешённые предметы оставляем как есть!
         disableUnwantedPrompts(allPrompts)
 
         local validPrompts = {}
@@ -359,28 +356,23 @@ local function farmCycle()
                 end
             end
 
-            -- Последовательно пытаемся собрать каждый предмет
             for _, prompt in ipairs(sortedPrompts) do
                 if not isFarming or stopRequested then break end
                 if isPromptValid(prompt) then
-                    local success = activatePrompt(prompt)
-                    if not success then
-                        -- Предмет не подобрался (промпт не появился) – просто идём дальше,
-                        -- его ProximityPrompt останется включённым для следующей попытки
-                    end
+                    activatePrompt(prompt)
                 end
                 task.wait(0.2)
             end
 
             clearHighlights()
 
-            -- Возвращаемся домой и выбрасываем ВСЁ из рюкзака
+            -- Телепорт домой и быстрый выброс всего
             teleportHome()
             while true do
                 local toolInHand = character:FindFirstChildOfClass("Tool")
                 if toolInHand then
                     dropRandomItem()
-                    task.wait(0.5)
+                    task.wait(0.2)  -- маленькая пауза, можно убрать для максимального спама
                 else
                     local backpackItems = {}
                     for _, item in ipairs(backpack:GetChildren()) do
@@ -394,10 +386,9 @@ local function farmCycle()
                     task.wait(0.1)
                 end
             end
-            task.wait(2)
+            task.wait(1)  -- небольшая пауза перед новым сканированием
         end
 
-        -- Ждём 5 секунд до следующего сканирования
         local waited = 0
         while waited < 5 and isFarming and not stopRequested do
             task.wait(0.5)
@@ -409,17 +400,17 @@ local function farmCycle()
     teleportHome()
 end
 
--- ====== ЦИКЛ АВТОДРОПА ======
+-- ====== ЦИКЛ АВТОДРОПА (БЕЗ ЗАДЕРЖЕК МЕЖДУ ПОПЫТКАМИ) ======
 function dropCycle()
     while isDropping do
         if isFarming then
             task.wait(0.5)
         else
-            local hasItems = dropRandomItem()
-            if hasItems then
-                task.wait(0.5)
-            else
-                task.wait(1)
+            dropRandomItem()
+            -- Никаких дополнительных задержек – сразу следующая итерация
+            -- Если предметов не было, даём крошечную передышку, чтобы не грузить процессор
+            if not (character:FindFirstChildOfClass("Tool") or #backpack:GetChildren() > 0) then
+                task.wait(0.05)
             end
         end
     end
