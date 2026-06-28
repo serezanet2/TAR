@@ -200,6 +200,17 @@ local function restorePromptsEnabled()
 end
 
 local function dropRandomItem()
+    -- 1. Проверяем, есть ли уже инструмент в руках персонажа
+    local equippedTool = character:FindFirstChildOfClass("Tool")
+    if equippedTool then
+        -- Просто выбрасываем то, что в руках
+        local vim = game:GetService("VirtualInputManager")
+        vim:SendKeyEvent(true, Enum.KeyCode.Backspace, false, nil)
+        vim:SendKeyEvent(false, Enum.KeyCode.Backspace, false, nil)
+        return true
+    end
+
+    -- 2. Если в руках пусто – ищем предметы в рюкзаке
     local items = {}
     for _, item in ipairs(backpack:GetChildren()) do
         if item:IsA("Tool") then
@@ -219,7 +230,6 @@ local function dropRandomItem()
     
     return true
 end
-
 -- ====== ОСНОВНОЙ ЦИКЛ ФАРМА ======
 
 local function farmCycle()
