@@ -3,17 +3,21 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
 local rootPart = character:WaitForChild("HumanoidRootPart")
+local backpack = player:WaitForChild("Backpack")
 
 -- Состояния
 local isFarming = false
+local isDropping = false
 local homeCFrame = nil
 local currentHighlights = {}
 local farmCoroutine = nil
+local dropCoroutine = nil
 local stopRequested = false
 local restartRequested = false
+local sessionFinished = false  -- флаг окончания сессии
 
 -- Разрешённые ключевые слова
-local ALLOWED_WORDS = {"box", "cup", "genesis", "silver", "gold", "copper"}
+local ALLOWED_WORDS = {"box", "cup", "genesis", "silver", "gold", "copper", "essence"}
 
 -- Для восстановления исходного Enabled у промптов
 local originalEnabledStates = {}
@@ -50,7 +54,17 @@ local function getParentObject(prompt)
     return parent
 end
 
+-- Проверка на покупной предмет (содержит $)
+local function isPurchaseItem(prompt)
+    if prompt.ObjectText and prompt.ObjectText:find("$") then return true end
+    if prompt.ActionText and prompt.ActionText:find("$") then return true end
+    if prompt.Name:find("$") then return true end
+    return false
+end
+
 local function shouldSkipItem(prompt)
+    if isPurchaseItem(prompt) then return true end
+
     local obj = getParentObject(prompt)
     if not obj then return true end
     local lowerName = obj.Name:lower()
@@ -123,20 +137,25 @@ local function getTargetPosition(prompt)
     return nil
 end
 
--- Проверка, существует ли ещё промпт и его объект
 local function isPromptValid(prompt)
     if not prompt or not prompt.Parent then return false end
     return getParentObject(prompt) ~= nil
 end
 
--- Активация промпта с УВЕЛИЧЕННЫМИ задержками
+-- Телепорт к домашней точке
+local function teleportHome()
+    if homeCFrame and rootPart then
+        rootPart.CFrame = homeCFrame
+    end
+end
+
+-- Активация промпта БЕЗ возврата домой
 local function activatePrompt(prompt)
     if not isPromptValid(prompt) then return false end
 
     local targetPos = getTargetPosition(prompt)
     if not targetPos then return false end
 
-    -- Смещение в случайную сторону по XZ на расстояние до 1 блока
     local angle = math.random() * 2 * math.pi
     local dist = math.random() * 1
     local xOff = math.cos(angle) * dist
@@ -144,19 +163,14 @@ local function activatePrompt(prompt)
     local offset = Vector3.new(xOff, 0, zOff)
 
     rootPart.CFrame = CFrame.new(targetPos + offset)
-    task.wait(0.5)                     -- БЫЛО 0.1, СТАЛО 0.5 — чтобы промпт успел зарегистрировать игрока
+    task.wait(0.5)
 
     prompt:InputHoldBegin()
     local holdTime = prompt.HoldDuration + 0.1
-    task.wait(holdTime)                -- само удержание
+    task.wait(holdTime)
     prompt:InputHoldEnd()
 
-    task.wait(0.3)                     -- БЫЛО 0.1, СТАЛО 0.3 — чтобы сервер обработал подбор
-
-    -- Возвращаемся на домашнюю точку
-    if homeCFrame then
-        rootPart.CFrame = homeCFrame
-    end
+    task.wait(0.3)
     return true
 end
 
@@ -180,17 +194,42 @@ local function restorePromptsEnabled()
     originalEnabledStates = {}
 end
 
--- ====== ОСНОВНОЙ ЦИКЛ ======
+-- Выброс одного случайного предмета
+local function dropRandomItem()
+    -- Собираем все предметы из инвентаря (Backpack)
+    local items = {}
+    for _, item in ipairs(backpack:GetChildren()) do
+        if item:IsA("Tool") then
+            table.insert(items, item)
+        end
+    end
+
+    if #items == 0 then return false end
+
+    -- Выбираем случайный
+    local randomItem = items[math.random(1, #items)]
+    
+    -- Экипируем (берём в руки)
+    character.Humanoid:EquipTool(randomItem)
+    task.wait(0.1)
+    
+    -- Нажимаем Backspace (выброс)
+    local vim = game:GetService("VirtualInputManager")
+    vim:SendKeyEvent(true, Enum.KeyCode.Backspace, false, nil)
+    vim:SendKeyEvent(false, Enum.KeyCode.Backspace, false, nil)
+    
+    return true
+end
+
+-- ====== ОСНОВНОЙ ЦИКЛ ФАРМА ======
 
 local function farmCycle()
     while isFarming and not stopRequested do
         rootPart.Anchored = false
 
-        -- Новое сканирование
         local allPrompts = getAllPrompts()
         disableUnwantedPrompts(allPrompts)
 
-        -- Отбор разрешённых
         local validPrompts = {}
         for _, prompt in ipairs(allPrompts) do
             if not shouldSkipItem(prompt) then
@@ -198,7 +237,6 @@ local function farmCycle()
             end
         end
 
-        -- Разделяем на боксы и остальное
         local boxPrompts = {}
         local otherPrompts = {}
         for _, prompt in ipairs(validPrompts) do
@@ -209,7 +247,6 @@ local function farmCycle()
             end
         end
 
-        -- Порядок: сначала боксы, потом остальные
         local sortedPrompts = {}
         for _, v in ipairs(boxPrompts) do table.insert(sortedPrompts, v) end
         for _, v in ipairs(otherPrompts) do table.insert(sortedPrompts, v) end
@@ -228,9 +265,9 @@ local function farmCycle()
             for _, prompt in ipairs(sortedPrompts) do
                 if not isFarming or stopRequested then break end
                 if isPromptValid(prompt) then
-                    activatePrompt(prompt)
+                    activatePrompt(prompt)  -- БЕЗ возврата домой
                 end
-                task.wait(0.2)   -- БЫЛО 0.1, СТАЛО 0.2 — пауза между предметами
+                task.wait(0.2)
             end
 
             clearHighlights()
@@ -240,7 +277,6 @@ local function farmCycle()
             rootPart.Anchored = true
         end
 
-        -- Пауза между проходами
         local waited = 0
         while waited < 5 and isFarming and not stopRequested do
             if restartRequested then
@@ -254,6 +290,31 @@ local function farmCycle()
 
     clearHighlights()
     rootPart.Anchored = false
+    
+    -- Сессия окончена или фарм выключен — телепорт домой
+    teleportHome()
+end
+
+-- ====== ЦИКЛ ВЫБРОСА ПРЕДМЕТОВ ======
+
+local function dropCycle()
+    while isDropping do
+        -- Если началась сессия фарма — пауза
+        if isFarming then
+            task.wait(0.5)  -- ждём, пока фарм активен
+        else
+            local hasItems = dropRandomItem()
+            if hasItems then
+                task.wait(0.5)  -- пауза между выбросами
+            else
+                -- Нет предметов — отключаем выброс
+                isDropping = false
+                break
+            end
+        end
+    end
+    
+    -- Если выброс остановлен и мы дома — просто остаёмся
 end
 
 -- ====== ТАЙМЕР АВТОРЕСТАРТА ======
@@ -279,8 +340,8 @@ screenGui.ResetOnSpawn = false
 screenGui.Parent = player:WaitForChild("PlayerGui")
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 280, 0, 160)
-frame.Position = UDim2.new(0.5, -140, 0.5, -80)
+frame.Size = UDim2.new(0, 280, 0, 200)
+frame.Position = UDim2.new(0.5, -140, 0.5, -100)
 frame.BackgroundColor3 = Color3.new(0.15, 0.15, 0.15)
 frame.BackgroundTransparency = 0.1
 frame.BorderSizePixel = 0
@@ -309,9 +370,10 @@ title.TextScaled = true
 title.Font = Enum.Font.GothamBold
 title.Parent = frame
 
+-- Кнопка автофарма
 local toggleButton = Instance.new("TextButton")
 toggleButton.Size = UDim2.new(0, 200, 0, 40)
-toggleButton.Position = UDim2.new(0.5, -100, 0.5, -20)
+toggleButton.Position = UDim2.new(0.5, -100, 0, 50)
 toggleButton.BackgroundColor3 = Color3.new(0.2, 0.6, 0.2)
 toggleButton.Text = "▶ Включить"
 toggleButton.TextColor3 = Color3.new(1, 1, 1)
@@ -324,6 +386,23 @@ local btnCorner = Instance.new("UICorner")
 btnCorner.CornerRadius = UDim.new(0, 8)
 btnCorner.Parent = toggleButton
 
+-- Кнопка автовыброса
+local dropButton = Instance.new("TextButton")
+dropButton.Size = UDim2.new(0, 200, 0, 40)
+dropButton.Position = UDim2.new(0.5, -100, 0, 100)
+dropButton.BackgroundColor3 = Color3.new(0.6, 0.4, 0.2)
+dropButton.Text = "🗑 Auto Drop"
+dropButton.TextColor3 = Color3.new(1, 1, 1)
+dropButton.TextScaled = true
+dropButton.Font = Enum.Font.GothamSemibold
+dropButton.BorderSizePixel = 0
+dropButton.Parent = frame
+
+local dropCorner = Instance.new("UICorner")
+dropCorner.CornerRadius = UDim.new(0, 8)
+dropCorner.Parent = dropButton
+
+-- Кнопка закрытия
 local closeButton = Instance.new("TextButton")
 closeButton.Size = UDim2.new(0, 30, 0, 30)
 closeButton.Position = UDim2.new(1, -40, 0, 5)
@@ -340,12 +419,13 @@ closeCorner.CornerRadius = UDim.new(0, 8)
 closeCorner.Parent = closeButton
 
 -- ====== ОБРАБОТЧИКИ ======
+
+-- Кнопка фарма
 toggleButton.MouseButton1Click:Connect(function()
     if not isFarming then
-        -- Запоминаем домашний CFrame
+        -- Сохраняем домашнюю точку
         homeCFrame = rootPart.CFrame
 
-        -- Запоминаем исходное состояние всех промптов
         local initialPrompts = getAllPrompts()
         originalEnabledStates = {}
         for _, prompt in ipairs(initialPrompts) do
@@ -364,6 +444,7 @@ toggleButton.MouseButton1Click:Connect(function()
         farmCoroutine = coroutine.create(farmCycle)
         coroutine.resume(farmCoroutine)
     else
+        -- Выключение фарма → телепорт домой
         isFarming = false
         stopRequested = true
         clearHighlights()
@@ -379,14 +460,42 @@ toggleButton.MouseButton1Click:Connect(function()
             restartTimerCoroutine = nil
         end
         restorePromptsEnabled()
+        
+        -- Телепорт домой при выключении
+        teleportHome()
+        
         toggleButton.Text = "▶ Включить"
         toggleButton.BackgroundColor3 = Color3.new(0.2, 0.6, 0.2)
     end
 end)
 
+-- Кнопка автовыброса
+dropButton.MouseButton1Click:Connect(function()
+    if not isDropping then
+        isDropping = true
+        dropButton.Text = "⏹ Stop Drop"
+        dropButton.BackgroundColor3 = Color3.new(0.8, 0.2, 0.2)
+
+        if dropCoroutine then coroutine.close(dropCoroutine) end
+        dropCoroutine = coroutine.create(dropCycle)
+        coroutine.resume(dropCoroutine)
+    else
+        isDropping = false
+        if dropCoroutine then
+            coroutine.close(dropCoroutine)
+            dropCoroutine = nil
+        end
+        dropButton.Text = "🗑 Auto Drop"
+        dropButton.BackgroundColor3 = Color3.new(0.6, 0.4, 0.2)
+    end
+end)
+
+-- Кнопка закрытия (телепорт домой при закрытии)
 closeButton.MouseButton1Click:Connect(function()
     isFarming = false
     stopRequested = true
+    isDropping = false
+    
     clearHighlights()
     if rootPart then
         rootPart.Anchored = false
@@ -395,11 +504,19 @@ closeButton.MouseButton1Click:Connect(function()
         coroutine.close(farmCoroutine)
         farmCoroutine = nil
     end
+    if dropCoroutine then
+        coroutine.close(dropCoroutine)
+        dropCoroutine = nil
+    end
     if restartTimerCoroutine then
         coroutine.close(restartTimerCoroutine)
         restartTimerCoroutine = nil
     end
     restorePromptsEnabled()
+    
+    -- Телепорт домой при закрытии скрипта
+    teleportHome()
+    
     screenGui:Destroy()
 end)
 
