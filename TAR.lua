@@ -1,4 +1,4 @@
--- LocalScript (Clie234234324nt)
+-- LocalScript (Client)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -13,6 +13,9 @@ local currentHighlights = {}
 local farmCoroutine = nil
 local dropCoroutine = nil
 local stopRequested = false
+
+-- Чёрный список выброшенных предметов (инстансы Tools)
+local droppedItems = {}
 
 -- Разрешённые ключевые слова
 local ALLOWED_WORDS = {"box", "cup", "genesis", "silver", "gold", "copper", "essence"}
@@ -52,7 +55,6 @@ local function getParentObject(prompt)
     return parent
 end
 
--- Проверка на покупной предмет (содержит $ в тексте)
 local function isPurchaseItem(prompt)
     if prompt.ObjectText and string.find(prompt.ObjectText, "$", 1, true) then
         return true
@@ -71,6 +73,12 @@ local function shouldSkipItem(prompt)
 
     local obj = getParentObject(prompt)
     if not obj then return true end
+
+    -- Пропускаем предметы из чёрного списка (уже выброшенные ранее)
+    if droppedItems[obj] then
+        return true
+    end
+
     local lowerName = obj.Name:lower()
 
     -- Пропускаем мусор
@@ -205,6 +213,8 @@ local function dropRandomItem()
         local vim = game:GetService("VirtualInputManager")
         vim:SendKeyEvent(true, Enum.KeyCode.Backspace, false, nil)
         vim:SendKeyEvent(false, Enum.KeyCode.Backspace, false, nil)
+        -- Запоминаем выброшенный предмет
+        droppedItems[equippedTool] = true
         return true
     end
 
@@ -226,6 +236,8 @@ local function dropRandomItem()
     vim:SendKeyEvent(true, Enum.KeyCode.Backspace, false, nil)
     vim:SendKeyEvent(false, Enum.KeyCode.Backspace, false, nil)
     
+    -- Запоминаем выброшенный предмет
+    droppedItems[randomItem] = true
     return true
 end
 
@@ -340,7 +352,7 @@ local function farmCycle()
         for _, v in ipairs(boxPrompts) do table.insert(sortedPrompts, v) end
         for _, v in ipairs(otherPrompts) do table.insert(sortedPrompts, v) end
 
-        -- Если есть предметы – фармим, если нет – просто ждём 5 секунд и проверяем снова
+        -- Если есть что собирать – идём забирать
         if #sortedPrompts > 0 then
             clearHighlights()
             for _, prompt in ipairs(sortedPrompts) do
@@ -361,11 +373,36 @@ local function farmCycle()
             end
 
             clearHighlights()
-            task.wait(0.2)
+            rootPart.Anchored = true
+
+            -- Возвращаемся домой и выбрасываем ВСЕ предметы из рюкзака
+            teleportHome()
+            while true do
+                local toolInHand = character:FindFirstChildOfClass("Tool")
+                if toolInHand then
+                    dropRandomItem()
+                    task.wait(0.5)
+                else
+                    -- Берём случайный предмет из рюкзака в руку
+                    local backpackItems = {}
+                    for _, item in ipairs(backpack:GetChildren()) do
+                        if item:IsA("Tool") then
+                            table.insert(backpackItems, item)
+                        end
+                    end
+                    if #backpackItems == 0 then break end
+                    local randomItem = backpackItems[math.random(1, #backpackItems)]
+                    character.Humanoid:EquipTool(randomItem)
+                    task.wait(0.1)
+                end
+            end
+            task.wait(2)  -- небольшая пауза после выброса перед новым сканированием
+        else
+            -- Нет доступных предметов – просто ждём и сканируем снова
             rootPart.Anchored = true
         end
 
-        -- Ожидание перед повторным сканированием (5 секунд)
+        -- Ожидание перед следующим сканированием (5 секунд)
         local waited = 0
         while waited < 5 and isFarming and not stopRequested do
             task.wait(0.5)
@@ -373,24 +410,24 @@ local function farmCycle()
         end
     end
 
-    -- Сюда попадаем только когда isFarming = false или stopRequested
+    -- Завершение фарма (ручная остановка)
     clearHighlights()
     rootPart.Anchored = false
     teleportHome()
 end
 
--- ====== ЦИКЛ ВЫБРОСА ПРЕДМЕТОВ ======
+-- ====== ЦИКЛ АВТОДРОПА (работает только когда фарм выключен) ======
 function dropCycle()
     while isDropping do
         if isFarming then
-            -- Во время фарма дроп не работает, просто ждём
+            -- Во время фарма дропом занимается сам фермер, так что просто ждём
             task.wait(0.5)
         else
             local hasItems = dropRandomItem()
             if hasItems then
                 task.wait(0.5)
             else
-                -- Нет предметов – ждём 1 секунду и проверяем снова
+                -- Ничего нет – ждём 1 секунду и проверяем опять
                 task.wait(1)
             end
         end
