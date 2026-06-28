@@ -1,4 +1,4 @@
--- LocalScript (Cliфывафыафыаent)
+-- LocalScript (Client)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -203,7 +203,6 @@ local function dropRandomItem()
     -- 1. Проверяем, есть ли уже инструмент в руках персонажа
     local equippedTool = character:FindFirstChildOfClass("Tool")
     if equippedTool then
-        -- Просто выбрасываем то, что в руках
         local vim = game:GetService("VirtualInputManager")
         vim:SendKeyEvent(true, Enum.KeyCode.Backspace, false, nil)
         vim:SendKeyEvent(false, Enum.KeyCode.Backspace, false, nil)
@@ -229,111 +228,6 @@ local function dropRandomItem()
     vim:SendKeyEvent(false, Enum.KeyCode.Backspace, false, nil)
     
     return true
-end
--- ====== ОСНОВНОЙ ЦИКЛ ФАРМА ======
-
-local function farmCycle()
-    while isFarming and not stopRequested do
-        rootPart.Anchored = false
-
-        local allPrompts = getAllPrompts()
-        disableUnwantedPrompts(allPrompts)
-
-        local validPrompts = {}
-        for _, prompt in ipairs(allPrompts) do
-            if not shouldSkipItem(prompt) then
-                table.insert(validPrompts, prompt)
-            end
-        end
-
-        local boxPrompts = {}
-        local otherPrompts = {}
-        for _, prompt in ipairs(validPrompts) do
-            if isBox(prompt) then
-                table.insert(boxPrompts, prompt)
-            else
-                table.insert(otherPrompts, prompt)
-            end
-        end
-
-        local sortedPrompts = {}
-        for _, v in ipairs(boxPrompts) do table.insert(sortedPrompts, v) end
-        for _, v in ipairs(otherPrompts) do table.insert(sortedPrompts, v) end
-
-        if #sortedPrompts > 0 then
-            clearHighlights()
-            for _, prompt in ipairs(sortedPrompts) do
-                local obj = getParentObject(prompt)
-                if obj then
-                    local useRed = isBox(prompt)
-                    local hl = createHighlight(obj, useRed)
-                    if hl then table.insert(currentHighlights, hl) end
-                end
-            end
-
-            for _, prompt in ipairs(sortedPrompts) do
-                if not isFarming or stopRequested then break end
-                if isPromptValid(prompt) then
-                    activatePrompt(prompt)
-                end
-                task.wait(0.2)
-            end
-
-            clearHighlights()
-            task.wait(0.2)
-            rootPart.Anchored = true
-        else
-            rootPart.Anchored = true
-        end
-
-        local waited = 0
-        while waited < 5 and isFarming and not stopRequested do
-            if restartRequested then
-                restartRequested = false
-                break
-            end
-            task.wait(0.5)
-            waited = waited + 0.5
-        end
-    end
-
-    clearHighlights()
-    rootPart.Anchored = false
-    teleportHome()
-end
-
--- ====== ЦИКЛ ВЫБРОСА ПРЕДМЕТОВ ======
-
-local function dropCycle()
-    while isDropping do
-        if isFarming then
-            task.wait(0.5)
-        else
-            local hasItems = dropRandomItem()
-            if hasItems then
-                task.wait(0.5)
-            else
-                isDropping = false
-                break
-            end
-        end
-    end
-end
-
--- ====== ТАЙМЕР АВТОРЕСТАРТА ======
-
-local restartTimerCoroutine
-local function startRestartTimer()
-    if restartTimerCoroutine then coroutine.close(restartTimerCoroutine) end
-    restartTimerCoroutine = coroutine.create(function()
-        while isFarming do
-            task.wait(5)
-            if isFarming then
-                restartRequested = true
-            end
-        end
-    end)
-    coroutine.resume(restartTimerCoroutine)
 end
 
 -- ====== GUI ======
@@ -418,7 +312,123 @@ local closeCorner = Instance.new("UICorner")
 closeCorner.CornerRadius = UDim.new(0, 8)
 closeCorner.Parent = closeButton
 
--- ====== ОБРАБОТЧИКИ ======
+-- ====== ОСНОВНОЙ ЦИКЛ ФАРМА ======
+local function farmCycle()
+    while isFarming and not stopRequested do
+        rootPart.Anchored = false
+
+        local allPrompts = getAllPrompts()
+        disableUnwantedPrompts(allPrompts)
+
+        local validPrompts = {}
+        for _, prompt in ipairs(allPrompts) do
+            if not shouldSkipItem(prompt) then
+                table.insert(validPrompts, prompt)
+            end
+        end
+
+        local boxPrompts = {}
+        local otherPrompts = {}
+        for _, prompt in ipairs(validPrompts) do
+            if isBox(prompt) then
+                table.insert(boxPrompts, prompt)
+            else
+                table.insert(otherPrompts, prompt)
+            end
+        end
+
+        local sortedPrompts = {}
+        for _, v in ipairs(boxPrompts) do table.insert(sortedPrompts, v) end
+        for _, v in ipairs(otherPrompts) do table.insert(sortedPrompts, v) end
+
+        -- Если предметов для фарма нет – завершаем цикл
+        if #sortedPrompts == 0 then
+            isFarming = false
+            stopRequested = true
+            break
+        end
+
+        clearHighlights()
+        for _, prompt in ipairs(sortedPrompts) do
+            local obj = getParentObject(prompt)
+            if obj then
+                local useRed = isBox(prompt)
+                local hl = createHighlight(obj, useRed)
+                if hl then table.insert(currentHighlights, hl) end
+            end
+        end
+
+        for _, prompt in ipairs(sortedPrompts) do
+            if not isFarming or stopRequested then break end
+            if isPromptValid(prompt) then
+                activatePrompt(prompt)
+            end
+            task.wait(0.2)
+        end
+
+        clearHighlights()
+        task.wait(0.2)
+        rootPart.Anchored = true
+
+        local waited = 0
+        while waited < 5 and isFarming and not stopRequested do
+            if restartRequested then
+                restartRequested = false
+                break
+            end
+            task.wait(0.5)
+            waited = waited + 0.5
+        end
+    end
+
+    -- Завершение фарма: чистим, телепортируемся, перезапускаем дроп (если был включён)
+    clearHighlights()
+    rootPart.Anchored = false
+    teleportHome()
+
+    if isDropping then
+        if dropCoroutine then coroutine.close(dropCoroutine) end
+        dropCoroutine = coroutine.create(dropCycle)
+        coroutine.resume(dropCoroutine)
+    end
+end
+
+-- ====== ЦИКЛ ВЫБРОСА ПРЕДМЕТОВ ======
+function dropCycle()   -- объявлена глобально, чтобы можно было перезапускать из других мест
+    while isDropping do
+        if isFarming then
+            task.wait(0.5)
+        else
+            local hasItems = dropRandomItem()
+            if hasItems then
+                task.wait(0.5)
+            else
+                -- Закончились предметы – выключаем дроп и обновляем кнопку
+                isDropping = false
+                dropButton.Text = "🗑 Auto Drop"
+                dropButton.BackgroundColor3 = Color3.new(0.6, 0.4, 0.2)
+                break
+            end
+        end
+    end
+end
+
+-- ====== ТАЙМЕР АВТОРЕСТАРТА ======
+local restartTimerCoroutine
+local function startRestartTimer()
+    if restartTimerCoroutine then coroutine.close(restartTimerCoroutine) end
+    restartTimerCoroutine = coroutine.create(function()
+        while isFarming do
+            task.wait(5)
+            if isFarming then
+                restartRequested = true
+            end
+        end
+    end)
+    coroutine.resume(restartTimerCoroutine)
+end
+
+-- ====== ОБРАБОТЧИКИ КНОПОК ======
 toggleButton.MouseButton1Click:Connect(function()
     if not isFarming then
         homeCFrame = rootPart.CFrame
@@ -457,6 +467,14 @@ toggleButton.MouseButton1Click:Connect(function()
         end
         restorePromptsEnabled()
         teleportHome()
+
+        -- При ручной остановке тоже перезапускаем дроп, если он был активен
+        if isDropping then
+            if dropCoroutine then coroutine.close(dropCoroutine) end
+            dropCoroutine = coroutine.create(dropCycle)
+            coroutine.resume(dropCoroutine)
+        end
+
         toggleButton.Text = "▶ Включить"
         toggleButton.BackgroundColor3 = Color3.new(0.2, 0.6, 0.2)
     end
