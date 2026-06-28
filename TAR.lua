@@ -1,4 +1,4 @@
--- LocalScript (Client1)
+-- LocalScript (Client)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -14,7 +14,7 @@ local farmCoroutine = nil
 local dropCoroutine = nil
 local stopRequested = false
 
--- Новый флаг: true только во время активного сбора предметов
+-- Флаг активности сбора (true только когда телепортируемся и активируем предмет)
 local isFarmBusy = false
 
 -- Чёрный список выброшенных предметов (инстансы Tools)
@@ -23,7 +23,7 @@ local droppedItems = {}
 -- Разрешённые ключевые слова
 local ALLOWED_WORDS = {"box", "cup", "genesis", "silver", "gold", "copper", "essence"}
 
--- Для восстановления оригинального Enabled у мусорных промптов
+-- Сохранение исходного состояния Enabled всех промптов (заполняется при старте фарма)
 local originalEnabledStates = {}
 
 -- ====== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ======
@@ -182,17 +182,7 @@ local function activatePrompt(prompt)
     return success
 end
 
-local function disableUnwantedPrompts(allPrompts)
-    for _, prompt in ipairs(allPrompts) do
-        if originalEnabledStates[prompt] == nil then
-            originalEnabledStates[prompt] = prompt.Enabled
-        end
-        if shouldSkipItem(prompt) then
-            prompt.Enabled = false
-        end
-    end
-end
-
+-- ====== Восстановление исходного Enabled ======
 local function restorePromptsEnabled()
     local currentPrompts = getAllPrompts()
     for _, prompt in ipairs(currentPrompts) do
@@ -200,7 +190,7 @@ local function restorePromptsEnabled()
         if orig ~= nil then
             prompt.Enabled = orig
         else
-            prompt.Enabled = true
+            prompt.Enabled = true   -- новые предметы включаем
         end
     end
     originalEnabledStates = {}
@@ -288,12 +278,17 @@ local closeCorner = Instance.new("UICorner")
 closeCorner.CornerRadius = UDim.new(0, 8)
 closeCorner.Parent = closeButton
 
--- ====== ОСНОВНОЙ ЦИКЛ ФАРМА (С АВТОВОЗВРАТОМ НА БАЗУ ПОСЛЕ СБОРА) ======
+-- ====== ОСНОВНОЙ ЦИКЛ ФАРМА (НОВАЯ ЛОГИКА) ======
 local function farmCycle()
     while isFarming and not stopRequested do
         local allPrompts = getAllPrompts()
-        disableUnwantedPrompts(allPrompts)
 
+        -- 1. Выключаем абсолютно все ProximityPrompt
+        for _, prompt in ipairs(allPrompts) do
+            prompt.Enabled = false
+        end
+
+        -- 2. Отбираем только разрешённые предметы (не мусор, не в чёрном списке)
         local validPrompts = {}
         for _, prompt in ipairs(allPrompts) do
             if not shouldSkipItem(prompt) then
@@ -301,61 +296,57 @@ local function farmCycle()
             end
         end
 
-        local boxPrompts, otherPrompts = {}, {}
-        for _, prompt in ipairs(validPrompts) do
-            if isBox(prompt) then
-                table.insert(boxPrompts, prompt)
-            else
-                table.insert(otherPrompts, prompt)
-            end
-        end
-        local sortedPrompts = {}
-        for _, v in ipairs(boxPrompts) do table.insert(sortedPrompts, v) end
-        for _, v in ipairs(otherPrompts) do table.insert(sortedPrompts, v) end
+        if #validPrompts > 0 then
+            -- Берём один случайный предмет
+            local targetPrompt = validPrompts[math.random(1, #validPrompts)]
 
-        if #sortedPrompts > 0 then
-            -- НАЧИНАЕМ АКТИВНЫЙ СБОР
+            -- Включаем флаг занятости (авто-дроп встанет на паузу)
             isFarmBusy = true
 
+            -- Подсвечиваем цель
             clearHighlights()
-            for _, prompt in ipairs(sortedPrompts) do
-                local obj = getParentObject(prompt)
-                if obj then
-                    local hl = createHighlight(obj, isBox(prompt))
-                    if hl then table.insert(currentHighlights, hl) end
-                end
+            local obj = getParentObject(targetPrompt)
+            if obj then
+                local hl = createHighlight(obj, isBox(targetPrompt))
+                if hl then table.insert(currentHighlights, hl) end
             end
 
-            for _, prompt in ipairs(sortedPrompts) do
-                if not isFarming or stopRequested then break end
-                if isPromptValid(prompt) then
-                    activatePrompt(prompt)
-                end
-                task.wait(0.2)
+            -- Включаем только нужный промпт
+            targetPrompt.Enabled = true
+
+            -- Телепортируемся и активируем
+            if isPromptValid(targetPrompt) then
+                activatePrompt(targetPrompt)
             end
 
+            -- Сразу после активации выключаем промпт, чтобы не мешал
+            targetPrompt.Enabled = false
+
+            -- Убираем хайлайт
             clearHighlights()
 
-            -- ВОЗВРАЩАЕМСЯ ДОМОЙ ПОСЛЕ СБОРА
-            teleportHome()
-            -- ЗАВЕРШИЛИ АКТИВНУЮ ФАЗУ
+            -- Сбор окончен – фарм больше не занят
             isFarmBusy = false
+
+            -- Без задержки переходим к следующей итерации (сканируем и собираем дальше)
+            task.wait(0.1)  -- микро-пауза, чтобы не грузить процессор в пустом цикле
         else
-            -- Если предметов нет, фарм точно не занят
+            -- Нет доступных предметов – телепортируемся домой и ждём 5 секунд
             isFarmBusy = false
-        end
+            teleportHome()
 
-        -- Ждём 5 секунд перед следующим сканированием (уже на точке home)
-        local waited = 0
-        while waited < 5 and isFarming and not stopRequested do
-            task.wait(0.5)
-            waited = waited + 0.5
+            local waited = 0
+            while waited < 5 and isFarming and not stopRequested do
+                task.wait(0.5)
+                waited = waited + 0.5
+            end
         end
     end
 
+    -- При выходе из цикла (stopRequested)
     clearHighlights()
     teleportHome()
-    isFarmBusy = false  -- на случай, если вышли из цикла во время сбора
+    isFarmBusy = false
 end
 
 -- ====== ЦИКЛ АВТОДРОПА (С ПЕРЕМЕЩЕНИЕМ ПРЕДМЕТОВ В CHARACTER ДЛЯ ПРИВЯЗКИ К HOME) ======
@@ -363,15 +354,14 @@ function dropCycle()
     local needPositionUpdate = true
 
     while isDropping do
-        -- Пропускаем дроп, только когда фарм РЕАЛЬНО в движении (собирает предметы)
+        -- Если фарм в процессе активации предмета – ждём
         if isFarmBusy then
-            needPositionUpdate = true   -- после окончания busy-режима обновим позиции предметов
+            needPositionUpdate = true
             task.wait(0.5)
         else
-            -- Шаг 1: телепорт на home (на всякий случай, если вдруг не там)
             teleportHome()
 
-            -- Шаг 2: одноразовое перемещение всех предметов в character и обратно для обновления позиций
+            -- Обновляем позиции предметов один раз при входе в состояние "не занят"
             if needPositionUpdate then
                 local toolsToMove = {}
                 for _, item in ipairs(backpack:GetChildren()) do
@@ -392,7 +382,7 @@ function dropCycle()
                 needPositionUpdate = false
             end
 
-            -- Шаг 3: быстрый циклический выброс
+            -- Быстрый циклический выброс
             while isDropping and not isFarmBusy do
                 local toolInHand = character:FindFirstChildOfClass("Tool")
                 local vim = game:GetService("VirtualInputManager")
@@ -435,6 +425,7 @@ toggleButton.MouseButton1Click:Connect(function()
     if not isFarming then
         homeCFrame = rootPart.CFrame
 
+        -- Сохраняем исходное состояние всех существующих промптов
         local initialPrompts = getAllPrompts()
         originalEnabledStates = {}
         for _, prompt in ipairs(initialPrompts) do
@@ -457,7 +448,7 @@ toggleButton.MouseButton1Click:Connect(function()
             coroutine.close(farmCoroutine)
             farmCoroutine = nil
         end
-        restorePromptsEnabled()
+        restorePromptsEnabled()   -- включаем всё обратно
         teleportHome()
 
         toggleButton.Text = "▶ Включить"
