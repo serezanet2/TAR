@@ -1,4 +1,4 @@
--- LocalScript (Client111)
+-- LocalScript (Client)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -19,7 +19,7 @@ local isFarmBusy = false
 -- Чёрный список выброшенных предметов
 local droppedItems = {}
 
--- Разрешённые ключевые слова
+-- Разрешённые ключевые слова (supply/medical исключены как мусор)
 local ALLOWED_WORDS = {"box", "cup", "genesis", "silver", "gold", "copper", "essence"}
 
 -- Для восстановления исходного Enabled
@@ -59,19 +59,17 @@ local function isPurchaseItem(prompt)
     return false
 end
 
--- Обновлённая функция: supply и medical теперь в списке исключений (мусор)
 local function shouldSkipItem(prompt)
     if isPurchaseItem(prompt) then return true end
     local obj = getParentObject(prompt)
     if not obj then return true end
     if droppedItems[obj] then return true end
     local lowerName = obj.Name:lower()
-    -- Мусор, включая supply и medical (даже если есть "box" в названии)
+    -- Мусор: включая supply и medical
     if lowerName:find("blood") or lowerName:find("garlic") or lowerName:find("oil") 
        or lowerName:find("supply") or lowerName:find("medical") then
         return true
     end
-    -- Проверяем разрешённые слова
     for _, word in ipairs(ALLOWED_WORDS) do
         if lowerName:find(word) then return false end
     end
@@ -190,7 +188,7 @@ mainGradient.Parent = frame
 
 -- Заголовок
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -40, 0, 24)
+title.Size = UDim2.new(1, -80, 0, 24)  -- освободили место под кнопки
 title.Position = UDim2.new(0, 10, 0, 6)
 title.BackgroundTransparency = 1
 title.Text = "AUTO FARM"
@@ -199,29 +197,31 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 16
 title.Parent = frame
 
--- Кнопка сворачивания
+-- ===== КНОПКИ (исправлено расположение и размер) =====
+
+-- Кнопка сворачивания (⤓) – теперь удобно нажимать
 local minimizeButton = Instance.new("TextButton")
-minimizeButton.Size = UDim2.new(0, 24, 0, 24)
-minimizeButton.Position = UDim2.new(1, -34, 0, 4)
+minimizeButton.Size = UDim2.new(0, 30, 0, 30)
+minimizeButton.Position = UDim2.new(1, -70, 0, 4)   -- отступ от закрывающей кнопки
 minimizeButton.BackgroundColor3 = Color3.fromRGB(255, 180, 50)
 minimizeButton.Text = "⤓"
 minimizeButton.TextColor3 = Color3.new(1, 1, 1)
 minimizeButton.Font = Enum.Font.GothamBold
-minimizeButton.TextSize = 16
+minimizeButton.TextSize = 18
 minimizeButton.BorderSizePixel = 0
 minimizeButton.Parent = frame
 local minCorner = Instance.new("UICorner", minimizeButton)
 minCorner.CornerRadius = UDim.new(1, 0)
 
--- Кнопка закрытия
+-- Кнопка закрытия (✕) – теперь легко нажать
 local closeButton = Instance.new("TextButton")
-closeButton.Size = UDim2.new(0, 24, 0, 24)
-closeButton.Position = UDim2.new(1, -6, 0, 4)
+closeButton.Size = UDim2.new(0, 30, 0, 30)
+closeButton.Position = UDim2.new(1, -34, 0, 4)   -- отступ от правого края
 closeButton.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
 closeButton.Text = "✕"
 closeButton.TextColor3 = Color3.new(1, 1, 1)
 closeButton.Font = Enum.Font.GothamBold
-closeButton.TextSize = 16
+closeButton.TextSize = 18
 closeButton.BorderSizePixel = 0
 closeButton.Parent = frame
 local closeCorner = Instance.new("UICorner", closeButton)
@@ -255,7 +255,7 @@ dropButton.Parent = frame
 local dropCorner = Instance.new("UICorner", dropButton)
 dropCorner.CornerRadius = UDim.new(0, 10)
 
--- Круглая кнопка TARC
+-- Круглая кнопка TARC (изначально скрыта)
 local tarcButton = Instance.new("TextButton")
 tarcButton.Name = "TarcButton"
 tarcButton.Size = UDim2.new(0, 56, 0, 56)
@@ -271,13 +271,14 @@ tarcButton.Parent = screenGui
 local tarcCorner = Instance.new("UICorner", tarcButton)
 tarcCorner.CornerRadius = UDim.new(1, 0)
 
--- Анимации
+-- Настройка анимаций
 local tweenInfoShow = TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local tweenInfoHide = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 
+-- Прячем панель (сворачивание) и показываем TARC
 local function hideMainPanel()
     local goal = {Position = UDim2.new(-0.5, -100, 0.5, -80)}
-    local tween = TweenService:Create(frame, tweenInfoHide, {Position = UDim2.new(-0.5, -100, 0.5, -80)})
+    local tween = TweenService:Create(frame, tweenInfoHide, goal)
     tween:Play()
     tween.Completed:Connect(function()
         frame.Visible = false
@@ -288,6 +289,7 @@ local function hideMainPanel()
     end)
 end
 
+-- Показываем панель из свёрнутого состояния
 local function showMainPanel()
     tarcButton.Visible = false
     frame.Visible = true
@@ -300,6 +302,7 @@ end
 minimizeButton.MouseButton1Click:Connect(hideMainPanel)
 tarcButton.MouseButton1Click:Connect(showMainPanel)
 
+-- Обработчик закрытия (крестик)
 closeButton.MouseButton1Click:Connect(function()
     isFarming = false
     stopRequested = true
