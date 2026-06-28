@@ -1,4 +1,4 @@
--- LocalScript (Cli1121212ent)
+-- LocalScript (Client)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -19,7 +19,7 @@ local isFarmBusy = false
 -- Чёрный список выброшенных предметов
 local droppedItems = {}
 
--- Разрешённые ключевые слова (supply/medical – мусор)
+-- Разрешённые ключевые слова (supply/medical исключены как мусор)
 local ALLOWED_WORDS = {"box", "cup", "genesis", "silver", "gold", "copper", "essence"}
 
 -- Для восстановления исходного Enabled
@@ -65,7 +65,7 @@ local function shouldSkipItem(prompt)
     if not obj then return true end
     if droppedItems[obj] then return true end
     local lowerName = obj.Name:lower()
-    -- Мусор, включая supply/medical
+    -- Мусор, включая supply и medical
     if lowerName:find("blood") or lowerName:find("garlic") or lowerName:find("oil") 
        or lowerName:find("supply") or lowerName:find("medical") then
         return true
@@ -128,7 +128,7 @@ local function teleportHome()
     if homeCFrame and rootPart then rootPart.CFrame = homeCFrame end
 end
 
--- ====== АКТИВАЦИЯ ПРОМПТА (с уменьшенными задержками) ======
+-- ====== МАКСИМАЛЬНО БЫСТРАЯ АКТИВАЦИЯ ПРОМПТА (все задержки 0.05) ======
 local function activatePrompt(prompt)
     if not isPromptValid(prompt) then return false end
     local targetPos = getTargetPosition(prompt)
@@ -137,13 +137,13 @@ local function activatePrompt(prompt)
     local dist = math.random() * 1
     local offset = Vector3.new(math.cos(angle) * dist, 0, math.sin(angle) * dist)
     rootPart.CFrame = CFrame.new(targetPos + offset)
-    task.wait(0.25)  -- было 0.5, уменьшено для скорости
+    task.wait(0.05)  -- минимальная пауза после телепорта
     local success = false
     local conn = prompt.Triggered:Connect(function() success = true end)
     prompt:InputHoldBegin()
-    task.wait(prompt.HoldDuration + 0.05)  -- минимальная добавка к удержанию
+    task.wait(prompt.HoldDuration + 0.05)  -- удержание с минимальной добавкой
     prompt:InputHoldEnd()
-    task.wait(0.2)  -- было 0.3, уменьшено
+    task.wait(0.05)  -- минимальная пауза после активации
     conn:Disconnect()
     return success
 end
@@ -299,7 +299,7 @@ closeButton.MouseButton1Click:Connect(function()
     screenGui:Destroy()
 end)
 
--- ====== ОСНОВНОЙ ЦИКЛ ФАРМА (ускоренный) ======
+-- ====== ОСНОВНОЙ ЦИКЛ ФАРМА (без лишних пауз) ======
 local function farmCycle()
     while isFarming and not stopRequested do
         local allPrompts = getAllPrompts()
@@ -324,7 +324,7 @@ local function farmCycle()
             targetPrompt.Enabled = false
             clearHighlights()
             isFarmBusy = false
-            -- Никакой дополнительной паузы – сразу к следующему предмету
+            -- Без дополнительной паузы
         else
             isFarmBusy = false
             teleportHome()
