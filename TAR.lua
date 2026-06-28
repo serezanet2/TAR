@@ -1,4 +1,4 @@
--- LocalScript (Client)
+-- LocalScript (Cli243423342342ent)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -65,7 +65,6 @@ local function isPurchaseItem(prompt)
 end
 
 local function shouldSkipItem(prompt)
-    -- Пропускаем покупные предметы
     if isPurchaseItem(prompt) then
         return true
     end
@@ -74,12 +73,10 @@ local function shouldSkipItem(prompt)
     if not obj then return true end
     local lowerName = obj.Name:lower()
 
-    -- Пропускаем мусор
     if lowerName:find("blood") or lowerName:find("garlic") or lowerName:find("oil") then
         return true
     end
 
-    -- Проверяем разрешённые слова
     for _, word in ipairs(ALLOWED_WORDS) do
         if lowerName:find(word) then
             return false
@@ -199,9 +196,19 @@ local function restorePromptsEnabled()
     originalEnabledStates = {}
 end
 
+-- Выброс одного случайного предмета (из рюкзака И из персонажа)
 local function dropRandomItem()
     local items = {}
+    
+    -- Собираем из рюкзака
     for _, item in ipairs(backpack:GetChildren()) do
+        if item:IsA("Tool") then
+            table.insert(items, item)
+        end
+    end
+    
+    -- Собираем из персонажа (то, что в руках)
+    for _, item in ipairs(character:GetChildren()) do
         if item:IsA("Tool") then
             table.insert(items, item)
         end
@@ -209,10 +216,16 @@ local function dropRandomItem()
 
     if #items == 0 then return false end
 
+    -- Выбираем случайный
     local randomItem = items[math.random(1, #items)]
-    character.Humanoid:EquipTool(randomItem)
-    task.wait(0.1)
     
+    -- Если предмет в рюкзаке — экипируем
+    if randomItem.Parent == backpack then
+        character.Humanoid:EquipTool(randomItem)
+        task.wait(0.1)
+    end
+    
+    -- Выбрасываем
     local vim = game:GetService("VirtualInputManager")
     vim:SendKeyEvent(true, Enum.KeyCode.Backspace, false, nil)
     vim:SendKeyEvent(false, Enum.KeyCode.Backspace, false, nil)
