@@ -20,7 +20,7 @@ local droppedItems = {}
 -- Разрешённые ключевые слова
 local ALLOWED_WORDS = {"box", "cup", "genesis", "silver", "gold", "copper", "essence"}
 
--- Для восстановления исходного Enabled у промптов
+-- Хранит оригинальное состояние Enabled для всех промптов
 local originalEnabledStates = {}
 
 -- ====== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ======
@@ -66,7 +66,6 @@ local function isPurchaseItem(prompt)
 end
 
 local function shouldSkipItem(prompt)
-    -- Пропускаем покупные предметы
     if isPurchaseItem(prompt) then
         return true
     end
@@ -74,19 +73,16 @@ local function shouldSkipItem(prompt)
     local obj = getParentObject(prompt)
     if not obj then return true end
 
-    -- Пропускаем предметы из чёрного списка (уже выброшенные ранее)
+    -- Пропускаем ранее выброшенные
     if droppedItems[obj] then
         return true
     end
 
     local lowerName = obj.Name:lower()
-
-    -- Пропускаем мусор
     if lowerName:find("blood") or lowerName:find("garlic") or lowerName:find("oil") then
         return true
     end
 
-    -- Проверяем разрешённые слова
     for _, word in ipairs(ALLOWED_WORDS) do
         if lowerName:find(word) then
             return false
@@ -186,42 +182,39 @@ local function activatePrompt(prompt)
     return true
 end
 
-local function disableUnwantedPrompts(allPrompts)
-    for _, prompt in ipairs(allPrompts) do
-        if originalEnabledStates[prompt] == nil then
-            originalEnabledStates[prompt] = prompt.Enabled
-        end
-        if shouldSkipItem(prompt) then
-            prompt.Enabled = false
-        end
-    end
-end
-
 local function restorePromptsEnabled()
-    for prompt, originalState in pairs(originalEnabledStates) do
-        if prompt and prompt.Parent then
-            prompt.Enabled = originalState
+    local currentPrompts = getAllPrompts()
+    for _, prompt in ipairs(currentPrompts) do
+        local original = originalEnabledStates[prompt]
+        if original ~= nil then
+            prompt.Enabled = original
+        else
+            prompt.Enabled = true  -- по умолчанию новые предметы включены
         end
     end
     originalEnabledStates = {}
 end
 
 local function dropRandomItem()
-    -- 1. Проверяем, есть ли уже инструмент в руках персонажа
+    local vim = game:GetService("VirtualInputManager")
+
+    -- Сначала проверяем, держит ли персонаж что-то в руках
     local equippedTool = character:FindFirstChildOfClass("Tool")
     if equippedTool then
-        local vim = game:GetService("VirtualInputManager")
+        -- Имитируем удержание Backspace
         vim:SendKeyEvent(true, Enum.KeyCode.Backspace, false, nil)
+        task.wait(0.2)
         vim:SendKeyEvent(false, Enum.KeyCode.Backspace, false, nil)
-        -- Запоминаем выброшенный предмет
+        task.wait(0.2) -- пауза, чтобы предмет успел появиться на земле
+
         droppedItems[equippedTool] = true
         return true
     end
 
-    -- 2. Если в руках пусто – ищем предметы в рюкзаке
+    -- Если в руках пусто, берём случайный предмет из рюкзака
     local items = {}
     for _, item in ipairs(backpack:GetChildren()) do
-        if item:IsA("Tool") then
+        if item:IsA("Tool") and not droppedItems[item] then
             table.insert(items, item)
         end
     end
@@ -230,13 +223,13 @@ local function dropRandomItem()
 
     local randomItem = items[math.random(1, #items)]
     character.Humanoid:EquipTool(randomItem)
-    task.wait(0.1)
-    
-    local vim = game:GetService("VirtualInputManager")
+    task.wait(0.3) -- даём игре время экипировать предмет
+
     vim:SendKeyEvent(true, Enum.KeyCode.Backspace, false, nil)
+    task.wait(0.2)
     vim:SendKeyEvent(false, Enum.KeyCode.Backspace, false, nil)
-    
-    -- Запоминаем выброшенный предмет
+    task.wait(0.2)
+
     droppedItems[randomItem] = true
     return true
 end
@@ -326,11 +319,21 @@ closeCorner.Parent = closeButton
 -- ====== ОСНОВНОЙ ЦИКЛ ФАРМА ======
 local function farmCycle()
     while isFarming and not stopRequested do
-        rootPart.Anchored = false
-
         local allPrompts = getAllPrompts()
-        disableUnwantedPrompts(allPrompts)
 
+        -- Сохраняем исходное состояние новых промптов (которых не было при старте)
+        for _, prompt in ipairs(allPrompts) do
+            if originalEnabledStates[prompt] == nil then
+                originalEnabledStates[prompt] = prompt.Enabled
+            end
+        end
+
+        -- Выключаем ВСЕ ProximityPrompt на карте
+        for _, prompt in ipairs(allPrompts) do
+            prompt.Enabled = false
+        end
+
+        -- Выбираем разрешённые цели
         local validPrompts = {}
         for _, prompt in ipairs(allPrompts) do
             if not shouldSkipItem(prompt) then
@@ -338,8 +341,8 @@ local function farmCycle()
             end
         end
 
-        local boxPrompts = {}
-        local otherPrompts = {}
+        -- Сортировка: сначала коробки, потом остальные
+        local boxPrompts, otherPrompts = {}, {}
         for _, prompt in ipairs(validPrompts) do
             if isBox(prompt) then
                 table.insert(boxPrompts, prompt)
@@ -347,34 +350,34 @@ local function farmCycle()
                 table.insert(otherPrompts, prompt)
             end
         end
-
         local sortedPrompts = {}
         for _, v in ipairs(boxPrompts) do table.insert(sortedPrompts, v) end
         for _, v in ipairs(otherPrompts) do table.insert(sortedPrompts, v) end
 
-        -- Если есть что собирать – идём забирать
         if #sortedPrompts > 0 then
             clearHighlights()
             for _, prompt in ipairs(sortedPrompts) do
                 local obj = getParentObject(prompt)
                 if obj then
-                    local useRed = isBox(prompt)
-                    local hl = createHighlight(obj, useRed)
+                    local hl = createHighlight(obj, isBox(prompt))
                     if hl then table.insert(currentHighlights, hl) end
                 end
             end
 
+            -- Последовательно активируем каждый промпт
             for _, prompt in ipairs(sortedPrompts) do
                 if not isFarming or stopRequested then break end
                 if isPromptValid(prompt) then
+                    prompt.Enabled = true         -- включаем только эту цель
                     activatePrompt(prompt)
+                    prompt.Enabled = false        -- сразу выключаем, чтобы не мешал
                 end
                 task.wait(0.2)
             end
 
             clearHighlights()
 
-            -- Возвращаемся домой и выбрасываем ВСЕ предметы из рюкзака
+            -- Телепорт домой и принудительный сброс всего из рюкзака
             teleportHome()
             while true do
                 local toolInHand = character:FindFirstChildOfClass("Tool")
@@ -382,7 +385,6 @@ local function farmCycle()
                     dropRandomItem()
                     task.wait(0.5)
                 else
-                    -- Берём случайный предмет из рюкзака в руку
                     local backpackItems = {}
                     for _, item in ipairs(backpack:GetChildren()) do
                         if item:IsA("Tool") then
@@ -395,12 +397,10 @@ local function farmCycle()
                     task.wait(0.1)
                 end
             end
-            task.wait(2)  -- небольшая пауза после выброса перед новым сканированием
-        else
-            -- Нет доступных предметов – просто ждём и сканируем снова
+            task.wait(2)  -- пауза перед следующим сканированием
         end
 
-        -- Ожидание перед следующим сканированием (5 секунд)
+        -- Ожидание 5 секунд до нового сканирования
         local waited = 0
         while waited < 5 and isFarming and not stopRequested do
             task.wait(0.5)
@@ -408,7 +408,6 @@ local function farmCycle()
         end
     end
 
-    -- Завершение фарма (ручная остановка)
     clearHighlights()
     teleportHome()
 end
@@ -417,14 +416,12 @@ end
 function dropCycle()
     while isDropping do
         if isFarming then
-            -- Во время фарма дропом занимается сам фермер, так что просто ждём
             task.wait(0.5)
         else
             local hasItems = dropRandomItem()
             if hasItems then
                 task.wait(0.5)
             else
-                -- Ничего нет – ждём 1 секунду и проверяем опять
                 task.wait(1)
             end
         end
@@ -434,9 +431,9 @@ end
 -- ====== ОБРАБОТЧИКИ КНОПОК ======
 toggleButton.MouseButton1Click:Connect(function()
     if not isFarming then
-        -- Включаем фарм
         homeCFrame = rootPart.CFrame
 
+        -- Сохраняем исходное состояние всех текущих промптов
         local initialPrompts = getAllPrompts()
         originalEnabledStates = {}
         for _, prompt in ipairs(initialPrompts) do
@@ -452,18 +449,14 @@ toggleButton.MouseButton1Click:Connect(function()
         farmCoroutine = coroutine.create(farmCycle)
         coroutine.resume(farmCoroutine)
     else
-        -- Выключаем фарм
         isFarming = false
         stopRequested = true
         clearHighlights()
-        if rootPart then
-            rootPart.Anchored = false
-        end
         if farmCoroutine then
             coroutine.close(farmCoroutine)
             farmCoroutine = nil
         end
-        restorePromptsEnabled()
+        restorePromptsEnabled()   -- восстанавливаем все промпты
         teleportHome()
 
         toggleButton.Text = "▶ Включить"
@@ -495,10 +488,8 @@ closeButton.MouseButton1Click:Connect(function()
     isFarming = false
     stopRequested = true
     isDropping = false
-    
+
     clearHighlights()
-    if rootPart then
-    end
     if farmCoroutine then
         coroutine.close(farmCoroutine)
         farmCoroutine = nil
