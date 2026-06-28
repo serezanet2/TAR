@@ -1,4 +1,4 @@
--- LocalScript (Cl234234324ient)
+-- LocalScript (Client)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -129,7 +129,7 @@ local function isPromptValid(prompt)
     return getParentObject(prompt) ~= nil
 end
 
--- Активация промпта с улучшенными задержками
+-- Активация промпта с УВЕЛИЧЕННЫМИ задержками
 local function activatePrompt(prompt)
     if not isPromptValid(prompt) then return false end
 
@@ -144,14 +144,14 @@ local function activatePrompt(prompt)
     local offset = Vector3.new(xOff, 0, zOff)
 
     rootPart.CFrame = CFrame.new(targetPos + offset)
-    task.wait(0.1)                     -- задержка перед началом удержания
+    task.wait(0.5)                     -- БЫЛО 0.1, СТАЛО 0.5 — чтобы промпт успел зарегистрировать игрока
 
     prompt:InputHoldBegin()
     local holdTime = prompt.HoldDuration + 0.1
     task.wait(holdTime)                -- само удержание
     prompt:InputHoldEnd()
 
-    task.wait(0.1)                     -- <-- НОВОЕ: пауза после отпускания, чтобы сервер успел обработать подбор
+    task.wait(0.3)                     -- БЫЛО 0.1, СТАЛО 0.3 — чтобы сервер обработал подбор
 
     -- Возвращаемся на домашнюю точку
     if homeCFrame then
@@ -228,9 +228,9 @@ local function farmCycle()
             for _, prompt in ipairs(sortedPrompts) do
                 if not isFarming or stopRequested then break end
                 if isPromptValid(prompt) then
-                    activatePrompt(prompt)   -- внутри возврат на homeCFrame с задержкой 0.1
+                    activatePrompt(prompt)
                 end
-                task.wait(0.1)   -- дополнительная пауза между предметами
+                task.wait(0.2)   -- БЫЛО 0.1, СТАЛО 0.2 — пауза между предметами
             end
 
             clearHighlights()
