@@ -20,7 +20,7 @@ local isFarmBusy = false
 local droppedItems = {}
 
 -- Разрешённые ключевые слова (supply/medical исключены как мусор)
-local ALLOWED_WORDS = {"box", "cup", "genesis", "silver", "gold", "copper", "essence"}
+local ALLOWED_WORDS = {"box", "cup", "genesis", "silver", "gold", "copper", "essence","oil"}
 
 -- Для восстановления исходного Enabled
 local originalEnabledStates = {}
@@ -66,7 +66,7 @@ local function shouldSkipItem(prompt)
     if droppedItems[obj] then return true end
     local lowerName = obj.Name:lower()
     -- Мусор: включая supply и medical
-    if lowerName:find("blood") or lowerName:find("garlic") or lowerName:find("oil") 
+    if lowerName:find("blood") or lowerName:find("garlic") -- or lowerName:find("oil") 
        or lowerName:find("supply") or lowerName:find("medical") then
         return true
     end
