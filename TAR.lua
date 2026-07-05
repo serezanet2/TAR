@@ -29,7 +29,8 @@ local isFarmBusy = false
 local droppedItems = {}
 
 -- Разрешённые ключевые слова
-local ALLOWED_WORDS = {"box", "cup", "genesis", "silver", "gold", "copper", "essence", "oil"}
+local ALLOWED_WORDS = {"box", "cup", "genesis", "silver", "gold", "copper", "essence", -- ["oil"--]}
+
 
 -- Для восстановления исходного Enabled
 local originalEnabledStates = {}
