@@ -3,7 +3,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local TweenService = game:GetService("TweenService")
 
--- Динамические ссылки
+-- Динамические ссылки (работают после респавна)
 local function getChar()
     return player.Character
 end
@@ -25,22 +25,15 @@ local dropCoroutine = nil
 local stopRequested = false
 local isFarmBusy = false
 
--- Чёрный список выброшенных
+-- Чёрный список выброшенных предметов
 local droppedItems = {}
 
--- Разрешённые слова (в порядке приоритета)
-local PRIORITY_WORDS = {
-    "box",      -- 1
-    "essence",  -- 2
-    "genesis",  -- 3
-    "gold",     -- 4
-    "silver",   -- 4
-    "copper",   -- 4
-    "oil",      -- 5
-    "blood"     -- 5
-}
+-- Разрешённые ключевые слова
+local ALLOWED_WORDS = {"box", "cup", "genesis", "silver", "gold", "copper", "essence",}
+--local ALLOWED_WORDS = {"box", "cup", "genesis", "silver", "gold", "copper", "essence", "oil", "blood"}
 
--- Для восстановления Enabled
+
+-- Для восстановления исходного Enabled
 local originalEnabledStates = {}
 
 -- ====== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ======
@@ -83,37 +76,14 @@ local function shouldSkipItem(prompt)
     if not obj then return true end
     if droppedItems[obj] then return true end
     local lowerName = obj.Name:lower()
-    -- Пропускаем цветы, чеснок, лилии, аптечки
     if lowerName:find("bloom") or lowerName:find("garlic") or lowerName:find("lil")
        or lowerName:find("supply") or lowerName:find("medical") then
         return true
     end
-    -- Проверяем по разрешённым словам
-    for _, word in ipairs(PRIORITY_WORDS) do
+    for _, word in ipairs(ALLOWED_WORDS) do
         if lowerName:find(word) then return false end
     end
     return true
-end
-
--- Получить приоритет объекта (чем меньше число, тем выше приоритет)
-local function getObjectPriority(obj)
-    if not obj then return 999 end
-    local lowerName = obj.Name:lower()
-    for i, word in ipairs(PRIORITY_WORDS) do
-        if lowerName:find(word) then
-            return i
-        end
-    end
-    return 999
-end
-
--- Сортировка промптов по приоритету (от меньшего к большему)
-local function sortPromptsByPriority(prompts)
-    table.sort(prompts, function(a, b)
-        local objA = getParentObject(a)
-        local objB = getParentObject(b)
-        return getObjectPriority(objA) < getObjectPriority(objB)
-    end)
 end
 
 local function isBox(prompt)
@@ -164,6 +134,7 @@ local function isPromptValid(prompt)
     return prompt and prompt.Parent and getParentObject(prompt) ~= nil
 end
 
+-- Теперь всегда использует актуальный корень
 local function teleportHome()
     local root = getRoot()
     if homeCFrame and root then
@@ -171,7 +142,7 @@ local function teleportHome()
     end
 end
 
--- ====== АКТИВАЦИЯ ПРОМПТА ======
+-- ====== АКТИВАЦИЯ ПРОМПТА С ПРОВЕРКОЙ ======
 local function activatePrompt(prompt)
     local root = getRoot()
     if not root then return false end
@@ -356,29 +327,19 @@ closeButton.MouseButton1Click:Connect(function()
     screenGui:Destroy()
 end)
 
--- ====== ФАРМ ЦИКЛ (с приоритетом) ======
+-- ====== ФАРМ ЦИКЛ ======
 local function farmCycle()
     while isFarming and not stopRequested do
         local allPrompts = getAllPrompts()
-        -- Выключаем все промпты
-        for _, prompt in ipairs(allPrompts) do
-            prompt.Enabled = false
-        end
+        for _, prompt in ipairs(allPrompts) do prompt.Enabled = false end
 
-        -- Фильтруем разрешённые
         local validPrompts = {}
         for _, prompt in ipairs(allPrompts) do
-            if not shouldSkipItem(prompt) then
-                table.insert(validPrompts, prompt)
-            end
+            if not shouldSkipItem(prompt) then table.insert(validPrompts, prompt) end
         end
 
         if #validPrompts > 0 then
-            -- Сортируем по приоритету
-            sortPromptsByPriority(validPrompts)
-            -- Берём первый (самый приоритетный)
-            local targetPrompt = validPrompts[1]
-
+            local targetPrompt = validPrompts[math.random(1, #validPrompts)]
             isFarmBusy = true
             clearHighlights()
             local obj = getParentObject(targetPrompt)
@@ -386,13 +347,9 @@ local function farmCycle()
                 local hl = createHighlight(obj, isBox(targetPrompt))
                 if hl then table.insert(currentHighlights, hl) end
             end
-
             targetPrompt.Enabled = true
-            if isPromptValid(targetPrompt) then
-                activatePrompt(targetPrompt)
-            end
+            if isPromptValid(targetPrompt) then activatePrompt(targetPrompt) end
             targetPrompt.Enabled = false
-
             clearHighlights()
             isFarmBusy = false
             task.wait(0.1)
@@ -401,8 +358,7 @@ local function farmCycle()
             teleportHome()
             local waited = 0
             while waited < 5 and isFarming and not stopRequested do
-                task.wait(0.5)
-                waited = waited + 0.5
+                task.wait(0.5); waited += 0.5
             end
         end
     end
@@ -411,11 +367,9 @@ local function farmCycle()
     isFarmBusy = false
 end
 
--- ====== АВТОДРОП (исправлен, без continue) ======
-local function dropCycle()
+-- ====== АВТОДРОП ======
+function dropCycle()
     local needPositionUpdate = true
-    local vim = game:GetService("VirtualInputManager") -- вынесено наружу
-
     while isDropping do
         if isFarmBusy then
             needPositionUpdate = true
@@ -424,32 +378,22 @@ local function dropCycle()
             teleportHome()
             if needPositionUpdate then
                 local char = getChar()
-                if char then
-                    local toolsToMove = {}
-                    for _, item in ipairs(backpack:GetChildren()) do
-                        if item:IsA("Tool") then
-                            table.insert(toolsToMove, item)
-                        end
-                    end
-                    for _, tool in ipairs(toolsToMove) do
-                        tool.Parent = char
-                    end
-                    task.wait(0.5)
-                    for _, tool in ipairs(toolsToMove) do
-                        tool.Parent = backpack
-                    end
-                    task.wait(0.5)
+                if not char then task.wait(0.5); continue end
+                local toolsToMove = {}
+                for _, item in ipairs(backpack:GetChildren()) do
+                    if item:IsA("Tool") then table.insert(toolsToMove, item) end
                 end
+                for _, tool in ipairs(toolsToMove) do tool.Parent = char end
+                task.wait(0.5)
+                for _, tool in ipairs(toolsToMove) do tool.Parent = backpack end
+                task.wait(0.5)
                 needPositionUpdate = false
             end
-
             while isDropping and not isFarmBusy do
                 local char = getChar()
-                if not char then
-                    task.wait(0.5)
-                    break
-                end
+                if not char then task.wait(0.5); break end
                 local toolInHand = char:FindFirstChildOfClass("Tool")
+                local vim = game:GetService("VirtualInputManager")
                 if toolInHand then
                     vim:SendKeyEvent(true, Enum.KeyCode.Backspace, false, nil)
                     task.wait(0.2)
@@ -459,15 +403,12 @@ local function dropCycle()
                 else
                     local items = {}
                     for _, item in ipairs(backpack:GetChildren()) do
-                        if item:IsA("Tool") then
-                            table.insert(items, item)
-                        end
+                        if item:IsA("Tool") then table.insert(items, item) end
                     end
                     if #items > 0 then
                         local randItem = items[math.random(1, #items)]
-                        local humanoid = char:FindFirstChild("Humanoid")
-                        if humanoid then
-                            humanoid:EquipTool(randItem)
+                        if char:FindFirstChild("Humanoid") then
+                            char.Humanoid:EquipTool(randItem)
                         end
                         task.wait(0.1)
                         vim:SendKeyEvent(true, Enum.KeyCode.Backspace, false, nil)
@@ -509,11 +450,21 @@ toggleButton.MouseButton1Click:Connect(function()
             coroutine.close(farmCoroutine)
             farmCoroutine = nil
         end
+        -- 👇 Сброс флага, чтобы автодроп мог работать
         isFarmBusy = false
         restorePromptsEnabled()
         teleportHome()
         toggleButton.Text = "▶ Включить"
         toggleButton.BackgroundColor3 = Color3.fromRGB(60, 180, 80)
+        -- (опционально) Автоматически запустить дроп:
+        -- if not isDropping then
+        --     isDropping = true
+        --     dropButton.Text = "⏹ Stop Drop"
+        --     dropButton.BackgroundColor3 = Color3.fromRGB(200, 70, 70)
+        --     if dropCoroutine then coroutine.close(dropCoroutine) end
+        --     dropCoroutine = coroutine.create(dropCycle)
+        --     coroutine.resume(dropCoroutine)
+        -- end
     end
 end)
 
@@ -534,4 +485,4 @@ dropButton.MouseButton1Click:Connect(function()
 end)
 
 frame.Active = true
-frame.Draggable = true
+frame.Draggable = true 
